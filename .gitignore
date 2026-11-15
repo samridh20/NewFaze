@@ -13,6 +13,7 @@
 # ---- Build output and caches ----
 node_modules/
 .next/
+.next-build/
 out/
 dist/
 .venv/
