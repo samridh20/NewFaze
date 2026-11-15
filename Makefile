@@ -88,7 +88,7 @@ compose-down:
 # ---- Live targets spend real tokens. They print a ceiling and need CONFIRM_LIVE=1 (NFR-10). ----
 live-check-gemini: ## Needs CONFIRM_LIVE=1. Checks the key can see and generate with each model
 	@test "$$CONFIRM_LIVE" = "1" || (echo "Refusing: this spends provider tokens (about 40 total). Re-run with CONFIRM_LIVE=1"; exit 2)
-	$(PY) scripts/check_gemini.py --generate $(if $(MODELS),--models=$(MODELS),)
+	$(PY) scripts/check_gemini.py $(if $(MODELS),--models=$(MODELS),)
 
 live-check-zep: ## Read-only Zep check (no tokens)
 	$(PY) scripts/check_zep.py

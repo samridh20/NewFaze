@@ -47,7 +47,8 @@ def redact(text: str, secrets: list[str] | None = None) -> str:
     return out
 
 
-def ledger_append(check: str, model: str, prompt_tokens: int, completion_tokens: int, note: str = "") -> None:
+def ledger_append(check: str, model: str, prompt_tokens: int, completion_tokens: int, note: str = "",
+                  status: str = "ok", thinking_tokens: int = 0) -> None:
     """Record live token use. The ledger is gitignored and holds no secrets."""
     LEDGER.parent.mkdir(parents=True, exist_ok=True)
     entry = {
@@ -58,6 +59,8 @@ def ledger_append(check: str, model: str, prompt_tokens: int, completion_tokens:
         "completion_tokens": completion_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
         "note": note,
+        "status": status,
+        "thinking_tokens": thinking_tokens,
     }
     with LEDGER.open("a") as handle:
         handle.write(json.dumps(entry) + "\n")
