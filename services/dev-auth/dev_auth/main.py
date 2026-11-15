@@ -66,10 +66,9 @@ def token(body: TokenRequest) -> dict:
     role, handle, consent, partner = spec
     claims = {
         "sub": str(account_id(body.account)),
-        "role": role,
-        "handle": handle,
-        "analytics_consent": consent,
-        "partner_id": str(partner_id(partner)) if partner else None,
+        "role": "authenticated",  # what Supabase sets; the application role is in app_metadata (CC-13)
+        "app_metadata": {"role": role, "partner_id": str(partner_id(partner)) if partner else None},
+        "user_metadata": {"handle": handle},
     }
     return {"access_token": sign(_KEY, claims, ISSUER, AUDIENCE), "token_type": "bearer",
             "account": body.account, "role": role, "handle": handle, "sub": claims["sub"]}
@@ -77,7 +76,9 @@ def token(body: TokenRequest) -> dict:
 
 def mint(sub: str | None = None, role: str = "fan", handle: str = "tester", ttl: int = 3600, **extra) -> str:
     """For tests only: sign a token for any subject with this process's key."""
-    claims = {"sub": sub or str(uuid.uuid4()), "role": role, "handle": handle, **extra}
+    extra_meta = {k: extra.pop(k) for k in ("partner_id",) if k in extra}
+    claims = {"sub": sub or str(uuid.uuid4()), "role": "authenticated",
+              "app_metadata": {"role": role, **extra_meta}, "user_metadata": {"handle": handle}, **extra}
     return sign(_KEY, claims, ISSUER, AUDIENCE, ttl)
 
 

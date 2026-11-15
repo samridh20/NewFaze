@@ -267,3 +267,13 @@ async def test_prediction_is_stored_only_as_a_hash_and_revealed_at_publish(inter
                              json={"predicted": predicted, "nonce": "nonce-12345"},
                              headers={**bearer(service_token()), **idem()})
     assert ok.status_code == 200
+
+
+async def test_supabase_shaped_token_maps_app_metadata_role(public, engine, dev_auth_url):
+    import httpx
+    from dev_auth.main import mint
+    token = mint(role="producer")
+    me = await public.get(f"/v1/ballots/{uuid.uuid4()}/me", headers=bearer(token))
+    assert me.status_code != 401  # authenticated and not rejected as role "authenticated"
+    bad = await public.get(f"/v1/ballots/{uuid.uuid4()}/me", headers=bearer(mint(role="authenticated")))
+    assert bad.status_code == 401

@@ -33,7 +33,6 @@ class Principal:
     role: str
     handle: str | None = None
     partner_id: str | None = None
-    analytics_consent: bool = False
 
 
 def _unauth(detail: str) -> ProblemError:
@@ -74,12 +73,15 @@ class JwtVerifier:
 
     async def verify(self, token: str) -> Principal:
         claims = await anyio.to_thread.run_sync(self._verify_sync, token)
-        role = claims.get("role") or claims.get("app_metadata", {}).get("role")
+        # Supabase sets the top-level role to "authenticated"; the application role is app_metadata.role (CC-13).
+        meta = claims.get("app_metadata") or {}
+        user_meta = claims.get("user_metadata") or {}
+        role = meta.get("role") or claims.get("role")
         if role not in ROLES:
             raise _unauth("no valid role claim")
         return Principal(
-            sub=str(claims["sub"]), role=role, handle=claims.get("handle"),
-            partner_id=claims.get("partner_id"), analytics_consent=bool(claims.get("analytics_consent")),
+            sub=str(claims["sub"]), role=role, handle=user_meta.get("handle") or claims.get("handle"),
+            partner_id=meta.get("partner_id") or claims.get("partner_id"),
         )
 
 

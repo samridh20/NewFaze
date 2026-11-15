@@ -58,12 +58,10 @@ async def cast_vote(
     await conn.execute(
         text(
             "insert into odyssey.accounts (user_id, handle, role, analytics_consent) "
-            "values (:u, :h, :r, :c) "
-            "on conflict (user_id) do update set handle = excluded.handle, "
-            "  analytics_consent = excluded.analytics_consent"
+            "values (:u, :h, :r, false) "
+            "on conflict (user_id) do update set handle = excluded.handle"
         ),
-        {"u": principal.sub, "h": principal.handle or "fan", "r": principal.role,
-         "c": principal.analytics_consent},
+        {"u": principal.sub, "h": principal.handle or "fan", "r": principal.role},
     )
 
     row = (

@@ -243,10 +243,9 @@ async def episode_viewed(slug: str, request: Request,
             raise ProblemError(404, "not-found", "Final Cut not found")
         if principal is not None:
             await conn.execute(text(
-                "insert into odyssey.accounts (user_id, handle, role, analytics_consent) values (:u, :h, :r, :c) "
-                "on conflict (user_id) do update set analytics_consent = excluded.analytics_consent"),
-                {"u": principal.sub, "h": principal.handle or "fan", "r": principal.role,
-                 "c": principal.analytics_consent})
+                "insert into odyssey.accounts (user_id, handle, role, analytics_consent) values (:u, :h, :r, false) "
+                "on conflict (user_id) do nothing"),
+                {"u": principal.sub, "h": principal.handle or "fan", "r": principal.role})
         await outbox.emit(conn, "episode.viewed", campaign_id=ep.campaign_id,
                           account_user_id=principal.sub if principal else None, props={"slug": slug})
     return {"status": "accepted"}
