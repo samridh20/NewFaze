@@ -38,7 +38,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Signal Lab API", version="0.1.0", lifespan=lifespan)
 install_error_handling(app)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3002", "http://127.0.0.1:3002", "http://localhost:3001"],
+app.add_middleware(CORSMiddleware, allow_origins=[
+    "http://localhost:3002", "http://127.0.0.1:3002", "http://localhost:3001",
+    "http://localhost:3010", "http://localhost:3011",
+],
                    allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
 
 
