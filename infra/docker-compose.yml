@@ -1,0 +1,61 @@
+# FaZe Odyssey: compose stack (Ch. 20). Runs in Colima, capped at 4 CPUs, 8 GiB and 30 GiB (D-7).
+# Every third-party image is pinned by digest. Real secrets come from gitignored env files; none are in this file.
+#
+# This file holds the data stores and the LLM router, which the live MiroFish chain depends on.
+# The application services are added to it as they are containerised.
+
+name: faze
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f
+    environment:
+      POSTGRES_PASSWORD: ${OWNER_DB_PASSWORD:?run make env first}
+      LITELLM_DB_PASSWORD: ${LITELLM_DB_PASSWORD:?run make env first}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # No host port: the native PostgreSQL on 5432 and this one never collide (FR-1.2).
+
+  redis:
+    image: redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  llm-gateway:
+    # LiteLLM v1.83.14-stable. Never 1.82.7 or 1.82.8, which shipped credential-stealing malware (Ch. 16).
+    image: ghcr.io/berriai/litellm@sha256:c81eb79cd4333c6cfe374c0ec929110fd23f0ee5f7fd198855a6fbddc77b83ba
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    env_file: .env.llm            # provider keys live here and reach only this container
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:4000:4000"     # loopback only: host-side checks and Signal Lab in native mode
+    networks:
+      - default
+      - mirofish-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+networks:
+  # Joined only by llm-gateway and MiroFish, so MiroFish cannot reach PostgreSQL, Redis or the APIs (FR-18.2).
+  mirofish-net:
+    name: faze-mirofish-net
+
+volumes:
+  pgdata:

@@ -1,0 +1,43 @@
+/FaZe Odyssey Homecoming (Design, Build and Reviews).md
+
+# ---- Secrets: real env files are never tracked; only *.example templates are ----
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# ---- Third-party checkouts and local runtime state ----
+/infra/mirofish/checkout/
+/.local/
+
+# ---- Build output and caches ----
+node_modules/
+.next/
+out/
+dist/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+/playwright-report/
+/test-results/
+*.log
+.DS_Store
+# ---- Backups, recovery copies and runtime artifacts (never committed) ----
+/.agents/backups/
+/var/
+*.db
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pid
+*.tsbuildinfo
+coverage/
+.coverage
+htmlcov/
+/e2e/artifacts/
+/log/

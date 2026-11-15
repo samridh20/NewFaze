@@ -1,0 +1,55 @@
+[project]
+name = "faze-odyssey-workspace"
+version = "0.1.0"
+description = "FaZe Odyssey and FaZe Signal Lab: Python workspace"
+requires-python = ">=3.11,<3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "httpx>=0.27",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "types-redis",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["services/*", "infra/migrations"]
+
+[tool.uv.sources]
+faze-common = { workspace = true }
+scrim-runner = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["infra/mirofish/checkout", "node_modules", ".local"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+markers = [
+  "live: spends real provider tokens; needs CONFIRM_LIVE=1",
+  "slow: takes more than a few seconds",
+]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+exclude = ["infra/mirofish/checkout"]

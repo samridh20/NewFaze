@@ -1,0 +1,67 @@
+# The router: every LLM call in the system goes through here (Ch. 16). Callers ask for a role, never a vendor.
+#
+# Model IDs come from the environment, so choosing or changing one is a config edit and not a code change.
+# GEMINI_FLASH_MODEL and GEMINI_FLASH_LITE_MODEL hold a full LiteLLM name such as "gemini/<model-id>".
+# They are set only after `make live-check-gemini` shows the key can generate with that model (FR-11.5).
+#
+# input_cost_per_token and output_cost_per_token are deliberately conservative planning prices (above the
+# published ones), so a per-key USD budget always binds, even if LiteLLM has no price for the model (NFR-10).
+
+model_list:
+  - model_name: bots-fast
+    litellm_params:
+      model: os.environ/GEMINI_FLASH_LITE_MODEL
+      api_key: os.environ/GEMINI_API_KEY
+      reasoning_effort: disable          # hidden reasoning tokens count against a limited key
+    model_info:
+      input_cost_per_token: 0.00000015
+      output_cost_per_token: 0.0000006
+
+  - model_name: bots-backup            # used only when bots-fast errors
+    litellm_params:
+      model: os.environ/GEMINI_FLASH_MODEL
+      api_key: os.environ/GEMINI_API_KEY
+      reasoning_effort: disable
+    model_info:
+      input_cost_per_token: 0.0000005
+      output_cost_per_token: 0.000003
+
+  - model_name: judge
+    litellm_params:
+      model: os.environ/GEMINI_FLASH_MODEL
+      api_key: os.environ/GEMINI_API_KEY
+      reasoning_effort: disable
+    model_info:
+      input_cost_per_token: 0.0000005
+      output_cost_per_token: 0.000003
+
+  - model_name: analyst                # MiroFish's report agent and chat use this alias
+    litellm_params:
+      model: os.environ/GEMINI_FLASH_MODEL
+      api_key: os.environ/GEMINI_API_KEY
+      reasoning_effort: disable
+    model_info:
+      input_cost_per_token: 0.0000005
+      output_cost_per_token: 0.000003
+
+  - model_name: bots-local             # defined but unconfigured: no local model server exists yet
+    litellm_params:
+      model: openai/<served-model-name>
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 60
+  fallbacks: [{"bots-fast": ["bots-backup"]}]
+
+litellm_settings:
+  drop_params: true                    # strip params a provider does not support
+  num_retries: 2
+  request_timeout: 60
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/LITELLM_DATABASE_URL   # virtual keys and budgets need it
+  store_prompts_in_spend_logs: true                # prompts and responses are kept for audit

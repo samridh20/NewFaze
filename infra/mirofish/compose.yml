@@ -1,0 +1,29 @@
+# MiroFish, run live from the pinned checkout (design 3.16, FR-18). Started with:
+#   docker compose -f infra/mirofish/compose.yml up -d
+#
+# It builds nothing here. The image `faze/mirofish:v0.1.2-985f89f` is built from infra/mirofish/checkout (commit
+# 985f89f49acbb44ee14d9d680682c741a44eeebe), never pulled from the moving `latest` tag. It joins only the
+# network that llm-gateway is on, so it cannot reach PostgreSQL, Redis or the APIs (FR-18.2).
+
+name: faze-mirofish
+
+services:
+  mirofish:
+    image: faze/mirofish:v0.1.2-985f89f
+    env_file: .env.runtime            # rendered by render_env.py, mode 600, gitignored
+    ports:
+      - "127.0.0.1:3000:3000"         # frontend
+      - "127.0.0.1:5001:5001"         # backend
+    volumes:
+      - mirofish-uploads:/app/backend/uploads    # projects, simulations and reports survive restarts
+    networks:
+      - mirofish-net
+    restart: unless-stopped
+
+networks:
+  mirofish-net:
+    name: faze-mirofish-net
+    external: true
+
+volumes:
+  mirofish-uploads:

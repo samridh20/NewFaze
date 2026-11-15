@@ -1,0 +1,7 @@
+{
+  "_comment": "Starting ceilings for live LLM use, until the first measured run replaces them (NFR-10, design 3.17). USD uses the conservative prices in infra/litellm/config.yaml, so these bind.",
+  "mirofish": { "max_budget_usd": 0.5, "rpm_limit": 30, "tpm_limit": 60000, "models": ["analyst"] },
+  "scrim_smoke": { "max_budget_usd": 0.05, "rpm_limit": 30, "tpm_limit": 40000, "models": ["bots-fast", "bots-backup", "judge"] },
+  "budget_bind_check": { "max_budget_usd": 0.0004, "rpm_limit": 10, "tpm_limit": 10000, "models": ["bots-fast"] },
+  "total_live_token_ceiling": 400000
+}
