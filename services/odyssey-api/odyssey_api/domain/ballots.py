@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from faze_common.commitment import prediction_commitment
 from faze_common.errors import ProblemError
 
 from . import outbox
@@ -206,7 +207,7 @@ def pick_winner(finalists: list[Any], tally: dict[str, int]) -> tuple[Any, bool,
     return leaders[0], len(leaders) > 1, top == 0
 
 
-async def publish_ballot(conn: AsyncConnection, ballot_id: uuid.UUID, actor: str) -> dict[str, Any]:
+async def publish_ballot(conn: AsyncConnection, ballot_id: uuid.UUID, actor: str, reveal: Any = None) -> dict[str, Any]:
     """One episode per ballot. A repeat or a lost race returns the existing episode (FR-7.2)."""
     ballot = (
         await conn.execute(
@@ -241,13 +242,21 @@ async def publish_ballot(conn: AsyncConnection, ballot_id: uuid.UUID, actor: str
 
     prediction = (
         await conn.execute(
-            text("select predicted, scrim_run_id from odyssey.sim_predictions where ballot_id = :b"), {"b": ballot_id}
+            text("select commitment, scrim_run_id, registered_at from odyssey.sim_predictions where ballot_id = :b"), {"b": ballot_id}
         )
     ).first()
     sim_vs_fans = None
     if prediction is not None:
+        if reveal is None:
+            raise ProblemError(422, "validation-error", "Publish needs the prediction and nonce",
+                               errors=[{"field": "predicted", "message": "a commitment exists; reveal it"}])
+        if prediction_commitment(str(ballot_id), reveal.predicted, reveal.nonce) != prediction.commitment:
+            raise ProblemError(422, "prediction-mismatch", "The prediction does not match its commitment")
+        if {str(f.entry_id) for f in finalists} != set(reveal.predicted) or abs(sum(reveal.predicted.values()) - 1.0) > 1e-6:
+            raise ProblemError(422, "validation-error", "The prediction must split 1.0 across the two finalists")
         sim_vs_fans = {
-            "predicted": prediction.predicted,
+            "predicted": reveal.predicted,
+            "commitment": prediction.commitment,
             "real": {str(f.entry_id): int(tally.get(str(f.entry_id), 0)) for f in finalists},
             "labels": {str(f.entry_id): f.label for f in finalists},
             "simulated": True,

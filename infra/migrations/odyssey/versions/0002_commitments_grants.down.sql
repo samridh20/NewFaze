@@ -1,0 +1,10 @@
+drop trigger if exists audit_append_only on odyssey.audit_log;
+drop trigger if exists credits_append_only on odyssey.credits;
+drop trigger if exists episodes_append_only on odyssey.episodes;
+drop function if exists odyssey.guard_append_only();
+alter table odyssey.idempotency_keys drop column expires_at;
+drop table odyssey.audit_log;
+delete from odyssey.sim_predictions;
+alter table odyssey.sim_predictions drop column commitment;
+alter table odyssey.sim_predictions add column predicted jsonb not null;
+grant select, insert, update, delete on all tables in schema odyssey to odyssey_app;

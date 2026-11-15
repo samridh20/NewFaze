@@ -186,22 +186,18 @@ async def advance(conn: AsyncConnection, campaign_id: uuid.UUID, actor: str) -> 
     return {"campaign_id": str(campaign_id), "from": state, "to": target, "result": result}
 
 
-async def register_prediction(conn: AsyncConnection, ballot_id: uuid.UUID, predicted: dict[str, Any],
+async def register_prediction(conn: AsyncConnection, ballot_id: uuid.UUID, commitment: str,
                               scrim_run_id: uuid.UUID | None, actor: str) -> dict[str, Any]:
+    """Stores only the SHA-256 commitment. The prediction itself arrives at publish (CC-1, AC-55)."""
     exists = (await conn.execute(text("select state from odyssey.ballots where id = :id for share"),
                                  {"id": ballot_id})).first()
     if exists is None:
         raise ProblemError(404, "not-found", "Ballot not found")
-    finalists = {str(r.entry_id) for r in (await conn.execute(
-        text("select entry_id from odyssey.ballot_finalists where ballot_id = :b"), {"b": ballot_id})).all()}
-    if set(predicted) != finalists or abs(sum(float(v) for v in predicted.values()) - 1.0) > 1e-6:
-        raise ProblemError(422, "validation-error", "The prediction must split 1.0 across the two finalists",
-                           errors=[{"field": "predicted", "message": "keys must be the finalist entry IDs"}])
     await conn.execute(
-        text("insert into odyssey.sim_predictions (ballot_id, predicted, scrim_run_id, registered_by) "
-             "values (:b, cast(:p as jsonb), :s, :a) "
-             "on conflict (ballot_id) do update set predicted = excluded.predicted, "
+        text("insert into odyssey.sim_predictions (ballot_id, commitment, scrim_run_id, registered_by) "
+             "values (:b, :c, :s, :a) "
+             "on conflict (ballot_id) do update set commitment = excluded.commitment, "
              "  scrim_run_id = excluded.scrim_run_id, registered_by = excluded.registered_by, registered_at = now()"),
-        {"b": ballot_id, "p": outbox.jsonb(predicted), "s": scrim_run_id, "a": actor},
+        {"b": ballot_id, "c": commitment, "s": scrim_run_id, "a": actor},
     )
     return {"ballot_id": str(ballot_id), "registered": True}

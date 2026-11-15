@@ -50,8 +50,14 @@ class BallotCreate(BaseModel):
 
 class PredictionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    predicted: dict[str, float]
+    commitment: str = Field(pattern="^[0-9a-f]{64}$")
     scrim_run_id: uuid.UUID | None = None
+
+
+class PublishIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    predicted: dict[str, float]
+    nonce: str = Field(min_length=8, max_length=128)
 
 
 async def idempotent(request: Request, actor: str, key: str | None, payload: Any, operation: Any,
@@ -169,14 +175,15 @@ async def post_close(ballot_id: uuid.UUID, request: Request, actor: Actor,
 
 @app.post("/internal/v1/ballots/{ballot_id}/publish")
 async def post_publish(ballot_id: uuid.UUID, request: Request, actor: Actor,
-                       idempotency_key: IdemKey = None) -> JSONResponse:
+                       body: PublishIn | None = None, idempotency_key: IdemKey = None) -> JSONResponse:
     async def after(_body: Any) -> None:
         campaign_id = await _campaign_of(ballot_id)
         if campaign_id:
             await notify_campaign(request, campaign_id)
 
-    return await idempotent(request, actor, idempotency_key, {"id": str(ballot_id)},
-                            lambda conn: ballots.publish_ballot(conn, ballot_id, actor), after=after)
+    return await idempotent(request, actor, idempotency_key,
+                            {"id": str(ballot_id), "body": body.model_dump(mode="json") if body else None},
+                            lambda conn: ballots.publish_ballot(conn, ballot_id, actor, body), after=after)
 
 
 @app.post("/internal/v1/ballots/{ballot_id}/prediction")
@@ -184,7 +191,7 @@ async def post_prediction(ballot_id: uuid.UUID, body: PredictionIn, request: Req
                           idempotency_key: IdemKey = None) -> JSONResponse:
     return await idempotent(
         request, actor, idempotency_key, {"id": str(ballot_id), **body.model_dump(mode="json")},
-        lambda conn: campaigns.register_prediction(conn, ballot_id, body.predicted, body.scrim_run_id, actor),
+        lambda conn: campaigns.register_prediction(conn, ballot_id, body.commitment, body.scrim_run_id, actor),
     )
 
 

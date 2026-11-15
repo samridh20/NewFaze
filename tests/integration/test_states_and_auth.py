@@ -129,7 +129,7 @@ async def test_closed_ballot_never_reopens_or_changes_its_tally(engine, internal
 
 async def test_sim_prediction_is_refused_after_close(internal, engine, service_token):
     world = await make_world(engine)
-    body = {"predicted": {str(world.entry_a): 0.6, str(world.entry_b): 0.4}}
+    body = {"commitment": "a" * 64}
     ok = await internal.post(f"/internal/v1/ballots/{world.ballot_id}/prediction", json=body,
                              headers={**bearer(service_token()), **idem()})
     assert ok.status_code == 200
@@ -243,3 +243,27 @@ async def test_no_secrets_or_tokens_in_error_bodies(public, engine, token):
     r = await public.post(f"/v1/ballots/{world.ballot_id}/votes", json={"entry_id": "not-a-uuid"},
                           headers={**bearer(tok), **idem()})
     assert r.status_code == 422 and tok not in r.text and r.headers["content-type"].startswith("application/problem+json")
+
+
+async def test_prediction_is_stored_only_as_a_hash_and_revealed_at_publish(internal, engine, service_token):
+    from faze_common.commitment import prediction_commitment
+    world = await make_world(engine)
+    predicted = {str(world.entry_a): 0.7, str(world.entry_b): 0.3}
+    h = {**bearer(service_token()), **idem()}
+    c = prediction_commitment(str(world.ballot_id), predicted, "nonce-12345")
+    assert (await internal.post(f"/internal/v1/ballots/{world.ballot_id}/prediction", json={"commitment": c},
+                                headers=h)).status_code == 200
+    async with engine.connect() as conn:
+        cols = {r[0] for r in (await conn.execute(text(
+            "select column_name from information_schema.columns where table_schema='odyssey' "
+            "and table_name='sim_predictions'"))).all()}
+    assert "predicted" not in cols and "commitment" in cols
+    await internal.post(f"/internal/v1/ballots/{world.ballot_id}/close", headers={**bearer(service_token()), **idem()})
+    bad = await internal.post(f"/internal/v1/ballots/{world.ballot_id}/publish",
+                              json={"predicted": {str(world.entry_a): 0.2, str(world.entry_b): 0.8}, "nonce": "nonce-12345"},
+                              headers={**bearer(service_token()), **idem()})
+    assert bad.status_code == 422
+    ok = await internal.post(f"/internal/v1/ballots/{world.ballot_id}/publish",
+                             json={"predicted": predicted, "nonce": "nonce-12345"},
+                             headers={**bearer(service_token()), **idem()})
+    assert ok.status_code == 200
