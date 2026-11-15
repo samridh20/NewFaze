@@ -2,146 +2,158 @@
 
 | | |
 | --- | --- |
-| Step | Technical design, pipeline run `2026-11-14_22-43-35`, revision 1 |
-| Inputs | `01-requirements.md` (FR, NFR, AC and A-numbers below refer to it), the source document (Ch. and App. references), and the pinned library sources of `camel-oasis` 0.2.6 and `camel-ai` 0.2.90, read for this design |
-| Workspace | New build. Only `.gitignore` (one line) and the untracked source document exist, and both stay unchanged. No review file existed in the run directory, so this is the first revision. |
+| Step | Technical design, pipeline run `2026-11-14_22-43-35`, revision 2 (reconciled) |
+| Inputs | `01-requirements.md` revision 3 (FR, NFR, AC, A, D and Q numbers refer to it), the source document (Ch. and App. references), the existing implementation at checkpoint commit `309a146` (P0 to P4), `03-plan.md`, `PROGRESS.md`, and the pinned `camel-oasis` 0.2.6 and `camel-ai` 0.2.90 sources, read for this design |
+| Precedence applied | 1. Requirements revision 3. 2. The user's live-MiroFish and Gemini decisions (D-3, D-5 to D-9, Q-9 approval). 3. Compatibility with the code already present. 4. Design numbers 3.16 and 3.17, which `03-plan.md`, `compose.yml` and `live-budgets.json` cite (rebuilt here, section 3.16 and 3.17). 5. Material kept from revision 1. Where code conflicts with revision 3, the design states the code change required (section 20.2) and does not weaken the requirement. |
+| History | Revision 1 (1,178 lines) was written against requirements revision 1 and overwrote a design written by another session, which Kiro's local history never captured. Revision 1 is kept at `.local/backup/02-design.my-rev1-1178lines.md` (gitignored) and in checkpoint commit `309a146`. An optional recovery file from the other session, `.agents/backups/2026-11-15_design-overwrite/02-design.impl-session.md`, had not appeared when this revision was written. If it appears, only decisions that are unique and compatible with revision 3 are merged, and section 22 records each. |
 
 ## 0. Overview
 
-The system is one npm workspace and one uv workspace in the repository root. Two Next.js apps (FaZe Odyssey on port 3001, FaZe Signal Lab on port 3002) each run behind a small Node edge server that serves the app and proxies `/api/*` to its own API on the same origin, so a phone needs only the Odyssey web URL. The Odyssey API runs as two processes from one package: a public listener and an internal listener that only Signal Lab can reach. Odyssey is the only writer of the `odyssey` schema, and PostgreSQL grants and triggers enforce that ownership, the state machines and the frozen records. Every state change writes an outbox row in the same transaction, and an arq relay copies those rows into `wh.events`. Signal Lab owns `lab` (scrims, predictions, calibration, backtests) and reads `wh` and `lore`. Scrims drive `camel-oasis` 0.2.6 directly through a deterministic adapter: actions run one agent at a time in bot-ID order, OASIS randomness comes from injected per-play generators, the recommender needs no model download, and every LLM call passes through a record/replay transport that enforces the budget. With `DEMO_MODE=1` and no credentials, a local token issuer, a deterministic fixture model, local HLS files and a dev mailbox stand in for Supabase, the LLM providers, Mux and email, and every screen says which mode each integration is in. The Sim vs Fans prediction is committed to Odyssey as a SHA-256 hash before close, so Odyssey holds no simulated values until publish, and the publish call proves the prediction predates the result.
+The system is one npm workspace and one uv workspace in the repository root. Two Next.js apps (FaZe Odyssey on port 3001, FaZe Signal Lab on port 3002) each run behind a small Node edge server that serves the app and proxies `/api/*` to its own API on the same origin, so a phone needs only the Odyssey web URL. The Odyssey API runs as two processes from one package: a public listener (8001) and an internal listener (8011) that only Signal Lab and the workers can reach. Odyssey is the only writer of the `odyssey` schema, and PostgreSQL grants and triggers enforce that ownership, the state machines and the frozen records. Every state change writes an outbox row in the same transaction, and an arq relay copies those rows into `wh.events`. Signal Lab owns `lab` (scrims, predictions, calibration, backtests, the MiroFish project record) and reads `wh` and `lore`.
+
+Scrims drive `camel-oasis` 0.2.6 directly through a deterministic adapter: actions run one agent at a time in bot-ID order, OASIS randomness comes from injected per-play generators, the recommender needs no model download, and every LLM call passes through a record/replay transport that enforces the budget. All LLM traffic goes to one OpenAI-compatible endpoint named by `LITELLM_URL`. In the compose stack that endpoint is the pinned LiteLLM router, which has one provider, the Google Gemini Developer API, and whose models are verified before they are configured. In `DEMO_MODE` without a provider key it is `services/fixture-gateway`, a deterministic local service that speaks the same chat and key-budget API, so one client code path serves both.
+
+MiroFish is not simulated, linked or replaced by recordings. It runs live in Docker from its own pinned, locally built checkout, calls the router with its own budgeted virtual key under the `analyst` alias, and uses Zep Cloud for memory with the user's key. Signal Lab's panel shows its live state and sends the analyst's questions to the real MiroFish backend. If MiroFish is unreachable the panel says so and the stage step fails. The only recorded stand-in allowed is an explicitly switched, loudly labelled emergency backup that never counts as verification (section 3.16). Live provider spend is deliberate, small and logged in a token ledger, and live targets refuse to run without `CONFIRM_LIVE=1` (section 3.17).
+
+With `DEMO_MODE=1`, a local token issuer (dev-auth, 8003), the fixture gateway, local HLS files and a dev mailbox stand in for Supabase, the LLM provider, Mux and email, and every screen says which mode each integration is in. MiroFish and its memory service are never "fixture": they read live or unreachable. The Sim vs Fans prediction is committed to Odyssey as a SHA-256 hash before close, so Odyssey holds no simulated values until publish, and the publish call proves the prediction predates the result.
 
 ### Key decisions
 
-**Internal route isolation.** Options were a path check in one app, a second port in one process, or a separate ASGI app run as its own process. A path check fails open if a proxy rule is wrong, and a second port in one container is still reachable from every network that container joins. The design runs the internal app as its own process, on loopback natively and on the `core` network only in compose, so isolation holds at the network layer and `/internal/*` does not exist on the public app (FR-2.6).
+**Live MiroFish, no substitute.** The earlier plan was a link plus labelled recorded interview answers. The user ruled it out (D-3), so MiroFish runs live in Docker, built from the pinned checkout, on its own network, with a budgeted router key and Zep Cloud memory. The panel's chat box goes to the real MiroFish backend, and a recorded capture exists only as an operator-switched emergency backup that voids verification (section 3.16). Recorded OASIS `INTERVIEW` answers remain in Scrims, labelled as Scrims output, and are never shown as a MiroFish chat.
+
+**One router, one provider, verified models.** All LLM calls go to one endpoint. The router has one provider (Gemini) because one key exists, and a model enters the config only after a pre-flight shows the key can generate with it (FR-11.5). The mapping, reasoning settings and token ledger are in sections 3.17 and 10.
+
+**Fixture gateway instead of an in-process fixture transport.** Revision 1 put the fixture model inside the run transport. The code already has a separate `services/fixture-gateway`, and a separate service has a better property: Signal Lab, the workers and the budget tests use the same HTTP client and the same key-budget calls against either backend. Record/replay still wraps the HTTP client in process (section 9.5).
+
+**Internal route isolation.** Options were a path check in one app, a second port in one process, or a separate ASGI app run as its own process. A path check fails open if a proxy rule is wrong, and a second port in one container is still reachable from every network that container joins. The internal app runs as its own process, on loopback natively and on the private network only in compose, so `/internal/*` does not exist on the public app (FR-2.6). The code already does this.
 
 **Same-origin edge proxy.** Browsers could call the APIs directly with CORS, but then a phone needs the API's address too, and Next.js passes a client-supplied `X-Forwarded-For` through. A small Node edge server in front of each app proxies `/api/*`, which gives one URL per app (FR-8.4) and a trustworthy client IP for the per-IP limits (AC-13).
 
-**Deterministic OASIS.** Replay could tolerate OASIS's concurrent steps by matching requests regardless of order, but concurrent agents see each other's posts in timing-dependent order, so the requests themselves change. The design runs each step's agents one at a time in bot-ID order and removes OASIS's 100 ms channel polling, which makes sequential execution fast enough (about 55 s estimated for the demo replay). Exact replay matters more than recording throughput, and recordings are made before the stage, so a live recording's slower sequential pace (one provider call at a time) never reaches the audience.
+**Deterministic OASIS.** Replay could tolerate OASIS's concurrent steps by matching requests regardless of order, but concurrent agents see each other's posts in timing-dependent order, so the requests themselves change. The runner executes each step's agents one at a time in bot-ID order and removes OASIS's 100 ms channel polling, which makes sequential execution fast enough (about 55 s estimated for the demo replay). Exact replay matters more than recording throughput, and recordings are made before the stage.
 
-**Sim vs Fans before close.** Storing the prediction in an Odyssey table before close would put simulated values in `odyssey` (AC-55 forbids it), and sending it only at publish cannot prove it predates the result (FR-9.3). Odyssey stores a SHA-256 commitment before close and verifies the full prediction against it at publish.
+**Sim vs Fans before close.** Storing the full prediction in an Odyssey table before close would put simulated values in `odyssey` (AC-55 forbids it), and sending it only at publish cannot prove it predates the result (FR-9.3). Odyssey stores a SHA-256 commitment before close and verifies the full prediction against it at publish. The code currently stores the prediction itself, which is listed as a required change (CC-1).
 
-**Idempotency claim in the same transaction.** A separate "in progress" marker committed first leaves orphans after crashes and needs a sweeper. Inserting the key row as the first statement of the operation's own transaction lets PostgreSQL serialize same-key requests on the unique index, and the response is stored atomically with the effects.
+**Idempotency by advisory lock.** The code serializes same-key requests on a transaction-scoped advisory lock and stores the response in the same transaction, so a caller never sees an "in progress" state. That satisfies AC-12 and replaces the lock-timeout design of revision 1.
 
-**Live-state fan-out.** PostgreSQL `NOTIFY` would deliver on commit, but it ties a database connection per process to the stream and puts fan-out load on the database. Redis pub/sub keeps fan-out off the database, and a 2-second database reconcile per watched campaign covers the gap between commit and publish.
+**Live-state fan-out.** PostgreSQL `NOTIFY` would deliver on commit, but it ties a database connection per process to the stream. Redis pub/sub keeps fan-out off the database, as the code does. A periodic database reconcile for watched campaigns is added as hardening (CC-8).
 
-**Recordings regenerated, not committed.** Committing the demo recording would add tens of megabytes and invite hand edits. The seed re-records it with the deterministic fixture model from committed inputs, about a minute of the five-minute seed budget (FR-10.12).
+**Recordings regenerated, not committed.** Committing the demo recording would add tens of megabytes and invite hand edits. The seed re-records it with the deterministic fixture gateway from committed inputs, about a minute of the five-minute seed budget (FR-10.12). MiroFish's pre-built project is the opposite case: it cannot be regenerated offline, so it is built once through the live services, kept in Docker volumes, and only its identifiers are seeded.
 
-**Guardian consent without pending rows.** A pending table would store a minor's details before consent. The emailed link carries the enrolment encrypted with Fernet, so PostgreSQL holds nothing until the guardian confirms (FR-17.1).
+**Guardian consent without pending rows.** A pending table would store a minor's details before consent. The emailed link carries the enrolment, so PostgreSQL holds nothing until the guardian confirms (FR-17.1). The code signs the token; encryption is a required change (CC-9).
 
 ## 1. Locked technology stack
 
-This stack is locked once the design is approved. Versions are the newest releases on 2026-11-14 that satisfy every constraint listed. Lockfiles record the exact resolution, and installs never re-resolve.
+This stack is locked once the design is approved. Python and npm versions are resolved by the committed lockfiles (`uv.lock` with hashes, `package-lock.json`); installs never re-resolve. Versions below are the newest releases on 2026-11-14 that satisfy every constraint listed, except where the code already pins something else, which is stated.
 
 | Layer | Choice and version | Why this version |
 | --- | --- | --- |
 | Python | CPython 3.11.15 from uv 0.11.7; `requires-python = ">=3.11,<3.12"` | Source locks 3.11 |
-| Python workspace | uv workspace, one `uv.lock` with hashes; `uv sync --frozen` everywhere | FR-1.9 |
-| API framework | FastAPI 0.163, Starlette 1.x, uvicorn 0.54, sse-starlette 3.7 | Current |
-| Validation | Pydantic 2.12.0 (upper bound from `camel-ai` 0.2.90: `pydantic<=2.12.0`), pydantic-settings 2.16 | One lock for all members |
-| Database access | SQLAlchemy 2.1 Core (`sqlalchemy[asyncio]`) on asyncpg 0.32; Alembic 1.20 with an async `env.py` | Source locks SQLAlchemy 2 async and Alembic. Core with hand-written SQL for lock-sensitive statements, no ORM sessions. |
+| Python workspace | uv workspace over `services/*` and `infra/migrations`; one `uv.lock`; `uv sync --python 3.11 --all-packages`, then `make fix-pth` on macOS | FR-1.9. macOS hides uv's editable `.pth` files from Python; `make fix-pth` clears the flag |
+| API framework | FastAPI, Starlette, uvicorn, sse-starlette | Current at lock time |
+| Validation | Pydantic 2.12.x (`camel-ai` 0.2.90 requires `pydantic<=2.12.0`), pydantic-settings | One lock for all members |
+| Database access | SQLAlchemy 2 Core with hand-written SQL (`text()`) on asyncpg at run time. Alembic with psycopg 3 for migrations | Source locks SQLAlchemy 2 async and Alembic. Lock-sensitive statements are written as SQL, not built by an ORM |
 | Jobs and Redis | arq 0.28 with redis-py 5.x (arq pins `redis<6`) | Source locks arq |
-| JWT and crypto | PyJWT 2.15 with `cryptography` 50 (ES256/RS256 user tokens, HS256 service tokens, Fernet guardian links) | |
-| HTTP clients | httpx 0.28; OpenAI SDK `openai>=2.29,<3` (resolves 2.54) | `camel-ai` 0.2.90 shipped on 2026-03-22, before `openai` 3.0.0 (2026-08-12) |
-| Simulation | `camel-oasis==0.2.6`, `camel-ai==0.2.90`, `mcp==1.29.0` (pinned by camel-oasis) | Source; verified by reading the wheels |
-| Torch | CPU wheels. On Linux, `torch` comes from the PyTorch CPU index through `[tool.uv.sources]` with a `sys_platform == 'linux'` marker | Keeps the worker image free of CUDA packages |
-| Calibration | pandas 2.2.3 (pinned by camel-oasis), NumPy (newest supporting 3.11), scikit-learn 1.9 | Source |
-| Logging | structlog 26 emitting JSON lines | NFR-1 |
-| Python quality | ruff 0.17 (format and lint), mypy 2.x with the Pydantic plugin | NFR-9 |
-| Python tests | pytest 9, pytest-asyncio 1.x, respx 0.23, hypothesis | |
-| Tooling | honcho 2.0 (native process runner), detect-secrets 1.5, jsonschema 4.26 | |
-| Node | Node 24.10, npm 11 workspaces, one `package-lock.json`; `npm ci` only | No pnpm or yarn here |
-| Web | Next.js 16.4 (App Router), React 19.3, Tailwind CSS 4.3, TanStack Query 5.107, hls.js 1.7.4 | Source |
+| JWT and crypto | PyJWT with `cryptography`: RS256 and ES256 user tokens, HS256 service and guardian tokens | The code's verifier |
+| HTTP clients | httpx 0.28; OpenAI SDK `openai>=2.29,<3` (`camel-ai` 0.2.90 shipped 2026-03-22, before `openai` 3.0.0) | |
+| Simulation | `camel-oasis==0.2.6`, `camel-ai==0.2.90`, `mcp==1.29.0` (pinned by camel-oasis) | Verified by reading the wheels |
+| Torch | CPU wheels through `[tool.uv.sources]` on Linux | Keeps the worker image free of CUDA packages |
+| Calibration | pandas 2.2.3 (pinned by camel-oasis), NumPy, scikit-learn | Source |
+| Logging | structlog, JSON lines, with `faze_common.redaction` | NFR-1 |
+| Python quality | ruff (format and lint), mypy | NFR-9. Configured in `pyproject.toml` |
+| Python tests | pytest, pytest-asyncio (session loop scope), httpx `ASGITransport`, respx where an HTTP peer is mocked | `tests/` at the repository root |
+| Node | Node 24.10, npm 11 workspaces, one `package-lock.json`; `npm ci` once the lockfile exists | No pnpm or yarn here |
+| Web | Next.js 16.4 (App Router), React 19.3, Tailwind CSS 4.3, TanStack Query 5, hls.js 1.7 | Source |
 | API types | openapi-typescript 7.13 and openapi-fetch 0.17 | Source names openapi-typescript |
 | TypeScript | 5.9.3 | openapi-typescript peers `^5.x`; typescript-eslint peers `<6.1` |
-| JS quality | ESLint 9.39 (flat config), eslint-config-next 16.4, typescript-eslint 8.72, Prettier 3.10 | eslint-plugin-react peers stop at ESLint 9.7+ |
-| JS tests | Vitest 5.1 with jsdom 31, Testing Library 16.3; Playwright 1.65 on the installed Google Chrome (`channel: "chrome"`) | Bundled Chromium lacks H.264 (Q-2) |
-| Images | `pgvector/pgvector:0.8.7-pg16-bookworm@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f`, `redis:7.4.9-bookworm@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954`, `ghcr.io/berriai/litellm:v1.109.1@sha256:11175975a3093e05e92faee2fe2fe3412a3ae2fcaa849eb0fe25d5f0d8bcb2e9`, `python:3.11-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39`, `node:24-bookworm-slim@sha256:dc26ae92c9fb15cf6b1d63e20f0944b2efe0f115b20e00be48fb23fceb061c54`, `ghcr.io/astral-sh/uv:0.11.7@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a` | Digests resolved from the registries on 2026-11-14. The tag stays beside each digest as documentation. |
-| MiroFish (outside the repo) | `666ghj/MiroFish` tag `v0.1.2`, commit `985f89f49acbb44ee14d9d680682c741a44eeebe`, image `ghcr.io/666ghj/mirofish:v0.1.2@sha256:d236402eb35c5abfd68da63be9d19202d619da8803e173e8e34b97731180944a` | Source pins v0.1.2 |
-| Compose schema | Compose Specification `schema/compose-spec.json` at commit `3a4a6995e4a971f6173dff9130cb3e38e6738651`, vendored | Offline fallback for AC-1 |
+| JS quality | ESLint 9.39 (flat config), eslint-config-next 16.4, typescript-eslint 8.72, Prettier 3.10 | eslint-plugin-react peers stop at ESLint 9.x |
+| JS tests | Vitest 5.1 with jsdom 31, Testing Library 16.3; Playwright 1.65 on the installed Google Chrome (`channel: "chrome"`, D-2) | Bundled Chromium lacks H.264 |
+| Docker engine | Colima 0.10.3 at 4 CPUs, 8 GiB memory, 30 GiB disk (D-7, D-8), Homebrew `docker` 29.9.3 and `docker-compose` 5.7.1 (Compose plugin linked at `~/.docker/cli-plugins`). No Docker Desktop or OrbStack | AC-75 |
+| PostgreSQL and Redis, native | Homebrew `postgresql@16` 16.16 with pgvector 0.8.7 built from source against it, and Homebrew Redis 8.x (D-1, A-31) | `scripts/local_db.sh` |
+| Compose images | `pgvector/pgvector:pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f`, `redis:7@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90`, `ghcr.io/berriai/litellm@sha256:c81eb79cd4333c6cfe374c0ec929110fd23f0ee5f7fd198855a6fbddc77b83ba` (LiteLLM v1.83.14-stable) | Already pinned in `infra/docker-compose.yml`. Neither 1.82.7 nor 1.82.8. Registry digests were resolved on 2026-11-14 |
+| LLM provider | Google Gemini Developer API behind LiteLLM; models `gemini-3.5-flash-lite` and `gemini-3.8-flash`, subject to the pre-flight in 3.17 | D-6 and Q-9. The 2.5 models the user first named return 404 for generation on this key |
+| MiroFish (outside the repo tree) | `666ghj/MiroFish` tag `v0.1.2`, commit `985f89f49acbb44ee14d9d680682c741a44eeebe`, AGPL-3.0, cloned to the gitignored `infra/mirofish/checkout/` and built locally as `faze/mirofish:v0.1.2-985f89f` | The upstream compose file uses the moving `:latest` tag, so the image is built from the pinned commit instead. No MiroFish source enters the repository |
+| MiroFish memory | Zep Cloud, user's key in `infra/.env.mirofish` | D-5 |
 
-No component depends on the `litellm` Python package. Services reach the router over HTTP, so LiteLLM exists only as the pinned image.
+Dockerfiles for the application services will pin their base images (`python:3.11-slim-bookworm`, `node:24-bookworm-slim`, `ghcr.io/astral-sh/uv:0.11.7`) by digest when written. The Compose Specification schema fallback of revision 1 is dropped: AC-1 now uses the real `docker compose config`. No component depends on the `litellm` Python package; services reach the router over HTTP, so LiteLLM exists only as the pinned image.
 
 ## 2. Repository layout
 
-The Ch. 10 tree maps onto the workspace root (A-2). Items marked `+` are additions the source does not list.
+The Ch. 10 tree maps onto the workspace root (A-2). `[x]` marks what exists at checkpoint `309a146`; `[ ]` marks what is still to build. Items marked `+` are additions the source does not list.
 
 ```text
 NewFaze/
-├── .gitignore                 # line 1 unchanged; new rules appended below it
-├── FaZe Odyssey Homecoming (Design, Build and Reviews).md   # untouched, stays ignored
-├── package.json, package-lock.json      # npm workspaces: apps/*, packages/*, e2e
-├── pyproject.toml, uv.lock, .python-version   # uv workspace root (virtual)
-├── Makefile, Procfile.dev(+), README.md, .secrets.baseline(+)
-├── apps/
-│   ├── odyssey-web/           # Lobby, Drop, Call It, Final Cut, Council, sign-in, dev mailbox
-│   └── signal-lab-web/        # Studio, Scrims, VOD Review, Partners, MiroFish panel, status
-├── packages/
-│   ├── ui/                    # tokens, SyncedReplay, SimValue, BallotCard, HlsVideo
-│   ├── api-client/            # generated from both OpenAPI specs, plus Sealed<T> types
-│   ├── web-auth/(+)           # Supabase and demo sign-in behind one interface
-│   └── edge-server/(+)        # Node server: serves Next.js, proxies /api/*, sets client IP
+├── .gitignore                    [x] line 1 unchanged; env, backup, runtime and cache rules appended
+├── FaZe Odyssey Homecoming (...).md   untouched, ignored by line 1
+├── Makefile                      [x] section 17        pyproject.toml, uv.lock   [x] uv workspace
+├── package.json                  [x] npm workspace root (apps and packages still [ ])
+├── config/live-budgets.json (+)  [x] live LLM ceilings, section 3.17
+├── apps/odyssey-web, apps/signal-lab-web                       [ ]
+├── packages/ui, packages/api-client, packages/web-auth (+), packages/edge-server (+)   [ ]
 ├── services/
-│   ├── common/(+)             # faze_common: auth, problems, idempotency, logging, canonical JSON
-│   ├── odyssey-api/           # public app and internal app (two listeners)
-│   ├── signal-lab-api/
-│   ├── workers/               # arq: relay, outcomes, refit, backtests, scrim jobs
-│   ├── scrim-runner/          # personas, policy, OASIS adapter, record/replay, fixture model
-│   └── dev-auth/(+)           # DEMO_MODE-only token issuer and JWKS
+│   ├── common/faze_common (+)    [x] auth, errors, logging, redaction, ratelimit, quoting, states,
+│   │                                 settings, demo_ids, litellm_admin
+│   ├── odyssey-api/odyssey_api   [x] public.py (8001), internal.py (8011), app_factory, db, sse, adapters,
+│   │                                 domain/{ballots,campaigns,votes,council,idempotency,outbox,reports}
+│   ├── dev-auth/dev_auth (+)     [x] DEMO_MODE token issuer and JWKS (8003)
+│   ├── fixture-gateway (+)       [ ] package stub only; section 9.6
+│   ├── signal-lab-api            [ ] stub     services/workers   [ ] stub     services/scrim-runner  [ ] stub
 ├── infra/
-│   ├── docker-compose.yml
-│   ├── litellm/config.yaml
-│   ├── migrations/            # Alembic: versions/{base,odyssey,lab,lore,wh}/
-│   ├── docker/(+)             # Dockerfiles for the Python and web images
-│   ├── .env*.example          # committed templates; real .env* files sit beside them, ignored
-│   ├── schema/compose-spec.json(+)
-│   └── mirofish/(+)           # setup.sh, .env.example, content pack builder
-├── seeds/                     # demo.yaml, scrims/, lore.yaml, backtests/, council.yaml,
-│   │                          # forecast_defaults.yaml, real_people.txt, media/
-│   └── loader/(+)             # faze_seeds package: `python -m faze_seeds.load`
-├── scripts/(+)                # with_env.py, compose_check.py, check_litellm_versions.py,
-│                              # api_client_check.sh, health.py, secrets_scan.sh
-├── e2e/(+)                    # Playwright stage test
-└── var/(+, gitignored)        # dev-auth key, OASIS scratch, logs, recordings scratch
+│   ├── docker-compose.yml        [x] postgres, redis, llm-gateway (more services added with their images)
+│   ├── litellm/config.yaml       [x] Gemini-only router config, section 10
+│   ├── migrations/               [x] run.py + one Alembic environment per schema (4 x 0001_init)
+│   ├── postgres/init/ (+)        [x] creates the litellm database and role
+│   ├── mirofish/ (+)             [x] compose.yml, render_env.py, provision_key.py   [ ] fetch, build, bootstrap, verify
+│   ├── .env*.example             [x] committed templates; real .env* files sit beside them, ignored
+│   └── docker/ (+)               [ ] Dockerfiles for Python and web images
+├── seeds/ [ ]                    seed.py (entry point of `make seed`), demo.yaml, scrims/, lore.yaml,
+│                                 backtests/, council.yaml, mirofish-pack/, media/
+├── scripts/ (+)                  [x] gen_env, local_db.sh, secretsafe, check_gemini, check_zep
+│                                 [ ] secret_scan, litellm_version_guard, verify_mirofish_chain, live_* targets
+├── tests/ (+)                    [x] conftest, helpers, integration/{test_states_and_auth,test_votes}
+│                                 [ ] unit/, repo/, more integration modules
+├── e2e/ (+)                      [ ] Playwright stage test
+└── .local/ (+, gitignored)       token-ledger.jsonl, secrets/, evidence/, mailbox/, dev-auth keys, backups
 ```
 
-Module map for the Python packages (each under `src/`):
+Module map for the Python packages. Existing modules are in the code; the rest are the design's additions.
 
 | Package | Modules |
 | --- | --- |
-| `faze_common` | `settings`, `modes`, `logging`, `auth/{jwks,user_token,service_token,principal,deps}`, `problems`, `idempotency`, `canonical`, `db` (engine factory, error mapping), `ratelimit`, `net`, `sim`, `quoting`, `testing` (pytest plugin) |
-| `odyssey_api` | `settings`, `public_app`, `internal_app`, `openapi`, `deps`, `db/tables`, `domain/{states,accounts,campaigns,ballots,votes,publish,council,anomalies,lobby,episodes,outbox,audit}`, `stream/hub`, `media`, `email`, `routes/public/*`, `routes/internal/*` |
-| `signal_lab_api` | `settings`, `app`, `openapi`, `deps`, `db/tables`, `odyssey_client`, `domain/{studio,scrims,predictions,vod,partners,lore,mirofish,status}`, `routes/*` |
-| `workers` | `main` (both `WorkerSettings`), `relay`, `outcomes`, `calibration`, `backtest`, `backtest_score`, `masking`, `probes`, `dossier`, `registry`, `scrim_jobs`, `predictions` |
-| `scrim` (scrim-runner) | `config`, `personas`, `network`, `policy`, `oasis_compat`, `engine`, `poll`, `prompts`, `transport`, `fixture_model`, `gateway`, `judge`, `analyst`, `metrics`, `forecasts`, `store`, `pipeline` |
-| `dev_auth`, `faze_seeds` | `app`, `keys`; `load`, `data` |
+| `faze_common` | exists: `settings`, `auth`, `errors`, `logging`, `redaction`, `ratelimit`, `quoting`, `states`, `demo_ids`, `litellm_admin`. To add: `modes` (integration modes), `canonical` (canonical JSON and SHA-256), `sim` (simulated value contract), `ledger` (token ledger) |
+| `odyssey_api` | exists: `app_factory`, `db`, `public`, `internal`, `sse`, `adapters`, `domain/*` as listed above. To add: `routes/status`, `domain/lobby`, `domain/episodes` (read side) |
+| `signal_lab_api` | `app`, `deps`, `odyssey_client`, `domain/{studio,scrims,predictions,vod,partners,lore,mirofish,status}`, `routes/*` |
+| `workers` | `main` (core and scrim `WorkerSettings`), `relay`, `outcomes`, `calibration`, `backtest`, `backtest_score`, `masking`, `probes`, `dossier`, `registry`, `scrim_jobs`, `predictions` |
+| `scrim` (scrim-runner) | `config`, `personas`, `network`, `policy`, `oasis_compat`, `engine`, `poll`, `prompts`, `transport`, `judge`, `analyst`, `metrics`, `forecasts`, `store`, `pipeline` |
+| `fixture_gateway` | `app` (OpenAI-compatible chat and the LiteLLM key-budget subset), `model` (deterministic behaviours of 9.6), `keys` |
+| `dev_auth`, `faze_seeds` | exists: `main`, `keys`. Seeds: `seeds/seed.py` plus a loader package |
 
-`services/common` holds code both APIs and the workers share, which FR-2.1 requires for JWT verification. `dev-auth`, `web-auth` and `edge-server` exist because fixture sign-in and same-origin proxying need a home. Section 20 lists every addition as a deviation.
-
-Lines appended to `.gitignore`: `.env`, `.env.*`, `!.env.example`, `!.env.*.example`, `node_modules/`, `.venv/`, `.next/`, `var/`, `e2e/artifacts/`, `__pycache__/`, `.pytest_cache/`, `.mypy_cache/`, `.ruff_cache/`, `*.tsbuildinfo`. A test asserts that line 1 is still the original rule and the source document's checksum is unchanged (AC-57).
+Lines appended to `.gitignore` (already in place): `.env`, `.env.*` with the `*.example` exceptions, `/infra/mirofish/checkout/`, `/.local/`, `/.agents/backups/`, `/var/`, build and cache directories, `*.log`, `*.db`, `*.sqlite*`, `*.pem`, `*.key`, `*.p12`, `*.pid`, coverage output, `/e2e/artifacts/`. A test asserts that line 1 is still the original rule and the source document's checksum is unchanged (AC-57).
 
 ## 3. Runtime topology
 
 ### 3.1 Processes and listeners
 
-| Process | Command (module) | Native bind | Compose service, networks | Published |
+| Process | Command (module) | Native bind | Compose service and networks | Host port |
 | --- | --- | --- | --- | --- |
-| Odyssey public API | `uvicorn odyssey_api.public_app:app` | 127.0.0.1:8001 | `odyssey-api`: edge, core | No |
-| Odyssey internal API | `uvicorn odyssey_api.internal_app:app` | 127.0.0.1:8011 | `odyssey-internal`(+): core only | No |
-| Signal Lab API | `uvicorn signal_lab_api.app:app` | 127.0.0.1:8002 | `signal-lab-api`: edge, core | No |
-| Dev auth (DEMO_MODE) | `uvicorn dev_auth.app:app` | 127.0.0.1:8099 | `dev-auth`(+): edge, profile `demo` | No |
-| Core worker | `arq workers.main.CoreWorker` | n/a | `workers`: core | No |
-| Scrim worker | `arq workers.main.ScrimWorker` | n/a | `scrim-worker`(+): core | No |
-| Odyssey web | `node packages/edge-server/bin/serve.mjs --app apps/odyssey-web` | 0.0.0.0:3001 | `odyssey-web`: edge | 3001:3000 |
-| Signal Lab web | same server, `--app apps/signal-lab-web` | 127.0.0.1:3002 | `signal-lab-web`: edge | 3002:3000 |
-| LLM router | pinned LiteLLM image | not run natively | `llm-gateway`: core, `faze-shared` | No |
-| PostgreSQL 16, Redis | Homebrew services (Q-1) | 127.0.0.1:5432, :6379 | `postgres`, `redis`: core | No |
-| Migrations | `alembic upgrade heads` | `make migrate` | `migrate`(+), one-shot | No |
+| Odyssey public API | `uvicorn odyssey_api.public:app` | 127.0.0.1:8001 | `odyssey-api`: `default` | none |
+| Odyssey internal API | `uvicorn odyssey_api.internal:app` | 127.0.0.1:8011 | `odyssey-internal`: `default` only | none |
+| Signal Lab API | `uvicorn signal_lab_api.app:app` | 127.0.0.1:8002 | `signal-lab-api`: `default` | none |
+| Dev auth (`DEMO_MODE=1`) | `uvicorn dev_auth.main:app` | 127.0.0.1:8003 | `dev-auth`, profile `demo`: `default` | none |
+| Fixture gateway (`DEMO_MODE=1`, no provider) | `uvicorn fixture_gateway.app:app` | 127.0.0.1:4010 | `fixture-gateway`, profile `demo`: `default` | none |
+| Core worker | `arq workers.main.CoreWorker` | n/a | `workers`: `default` | none |
+| Scrim worker | `arq workers.main.ScrimWorker` | n/a | `scrim-worker`: `default` | none |
+| Odyssey web | edge server for `apps/odyssey-web` | 0.0.0.0:3001 | `odyssey-web`: `default` | 3001 |
+| Signal Lab web | same edge server, `apps/signal-lab-web` | 127.0.0.1:3002 | `signal-lab-web`: `default` | 3002 |
+| LLM router | pinned LiteLLM image | not run natively | `llm-gateway`: `default` and `faze-mirofish-net` | 127.0.0.1:4000 |
+| MiroFish | `faze/mirofish:v0.1.2-985f89f` from `infra/mirofish/compose.yml` | n/a, Docker only | `faze-mirofish` project: `faze-mirofish-net` only | 127.0.0.1:3000, 127.0.0.1:5001 |
+| PostgreSQL 16, Redis | native: Homebrew services; compose: `postgres`, `redis` | native 127.0.0.1:5432 and 6379 | `default` | none in compose |
+| Migrations | `python infra/migrations/run.py upgrade` | `make migrate` | `migrate`, one-shot (to add) | none |
 
-The scrim worker is a separate process with `max_jobs = 1` because OASIS keeps process-wide state (the `OASIS_DB_PATH` environment variable and module-level random generators, see 9.4). Signal Lab web binds to loopback by default because it is staff-only; `SIGNAL_LAB_WEB_HOST` can widen it.
+The scrim worker is a separate process with `max_jobs = 1` because OASIS keeps process-wide state (the `OASIS_DB_PATH` environment variable and module-level random generators, see 9.4). Signal Lab web binds to loopback by default because it is staff-only.
 
 ### 3.2 Network isolation
 
-Browsers never call an API port. Each web app's edge server (`packages/edge-server`) is a Node `http` server that hands page requests to Next.js and proxies a fixed prefix list to upstreams, streaming responses so SSE passes through unbuffered:
+Browsers never call an API port. Each web app's edge server is a Node `http` server that hands page requests to Next.js and proxies a fixed prefix list to upstreams, streaming responses so SSE passes through unbuffered:
 
 | Edge path | Odyssey web upstream | Signal Lab web upstream |
 | --- | --- | --- |
@@ -150,156 +162,271 @@ Browsers never call an API port. Each web app's edge server (`packages/edge-serv
 | `/api/dev-auth/*` | dev-auth, only when `DEMO_MODE=1` | dev-auth, only when `DEMO_MODE=1` |
 | anything else under `/api/` | 404 | 404 |
 
-The edge server deletes any incoming `X-Forwarded-For`, `Forwarded` and `X-Real-IP` headers and sets `X-Forwarded-For` to the TCP peer address, because it is the outermost hop. Next.js itself only fills `X-Forwarded-For` when absent, which would let a client spoof it, so this cannot be left to Next.js. The edge forwards an allowlist of request headers (`authorization`, `content-type`, `idempotency-key`, `x-request-id`, `x-referral`, `accept`, `last-event-id`) and strips `cookie`. Next.js compression is off (`compress: false`) so the proxied event stream is never buffered.
+The edge server deletes incoming `X-Forwarded-For`, `Forwarded` and `X-Real-IP` and sets `X-Forwarded-For` to the TCP peer address, because it is the outermost hop. Next.js only fills `X-Forwarded-For` when absent, which would let a client spoof it. The edge forwards an allowlist of request headers (`authorization`, `content-type`, `idempotency-key`, `x-request-id`, `x-referral`, `accept`, `last-event-id`) and strips `cookie`. Next.js compression is off so the proxied event stream is never buffered.
 
-The internal routes live in a separate ASGI app that the public app does not mount, so `/internal/*` on the public listener is a plain 404 (AC-6). Natively the internal listener binds 127.0.0.1 (A-28). In compose, `odyssey-internal` joins only the `core` network, and the web apps join only `edge`, so a web container cannot open a connection to it. The compose file also declares `faze-shared` with a fixed `name: faze-shared`, attached to `llm-gateway`, which MiroFish's compose joins as an external network (FR-1.2).
+The internal routes live in a separate ASGI app that the public app does not mount, so `/internal/*` on the public listener is a 404 (AC-6). Natively the internal listener binds 127.0.0.1 (A-28). In compose, `odyssey-internal` publishes no port and the web apps cannot address it. Browser traffic is same-origin, but the public app still sets CORS to the two web origins without credentials (the code's `WEB_ORIGINS`); the internal app sets none.
 
-Browser traffic is same-origin, but both APIs still set CORS to allow exactly the two web origins in `WEB_ORIGINS`, without credentials, for methods `GET`, `POST`, `PUT`, `PATCH` and headers `Authorization`, `Content-Type`, `Idempotency-Key`, `X-Request-ID`, `X-Referral` (NFR-1). The internal app sets no CORS headers at all.
-
-The APIs trust `X-Forwarded-For` only when the TCP peer is inside `TRUSTED_PROXY_CIDRS` (default `127.0.0.1/32,::1/128`; compose sets the `edge` subnet, fixed in the file as `172.28.10.0/24`). Otherwise they use the peer address. Exactly one forwarded hop is accepted: the right-most entry. AC-13's spoofing test sends `X-Forwarded-For` from an untrusted peer and checks the charged bucket.
+The APIs trust `X-Forwarded-For` only when the TCP peer is inside `TRUSTED_PROXIES` (empty by default, so the peer address is used; compose sets the edge subnet). Exactly one forwarded hop is accepted: the right-most entry. AC-13's spoofing test sends the header from an untrusted peer and checks the charged bucket.
 
 ### 3.3 Environment files and secrets
 
-Real files live in `infra/` next to the compose file and are gitignored. Each has a committed `*.example` with placeholders only. `make env` copies missing files from the templates and fills local-only random secrets (`openssl rand`) for development; it never overwrites an existing file.
+Real files live in `infra/` next to the compose file and are gitignored. Each has a committed `*.example` with placeholders only. `make env` runs `scripts/gen_env.py`, which creates missing files with mode 600 and random local secrets, never overwrites an existing value, and never prints a value.
 
-| File | Keys | Reaches |
+| File | Keys | Reaches (target, see CC-2) |
 | --- | --- | --- |
-| `.env` | `APP_ENV` (`development` or `production`), `DEMO_MODE`, `LOG_LEVEL`, `REDIS_URL`, `SUPABASE_URL`, `SUPABASE_JWKS_URL`, `MUX_TOKEN_ID`, `MUX_TOKEN_SECRET`, `MUX_WEBHOOK_SECRET`, `LITELLM_URL`, `ODYSSEY_INTERNAL_TOKEN_SECRET`, `DEV_AUTH_URL`, `WEB_ORIGINS` | Both APIs, both workers, dev-auth (Ch. 20) |
-| `.env.odyssey` | `ODYSSEY_DATABASE_URL` (role `faze_odyssey`), `IP_HASH_SECRET`, `COUNCIL_TOKEN_KEY` (Fernet), `COUNCIL_HASH_SECRET`, `TRUSTED_PROXY_CIDRS`, rate-limit settings | Odyssey public and internal only |
-| `.env.lab` | `LITELLM_MASTER_KEY`, `LAB_DATABASE_URL` (role `faze_lab`), `MIROFISH_URL`, `SCRIM_MAX_BUDGET_USD` | Signal Lab API, both workers |
-| `.env.relay` | `RELAY_DATABASE_URL` (role `faze_relay`) | Core worker only |
-| `.env.llm` | `LITELLM_MASTER_KEY`, `LITELLM_DATABASE_URL` (database `litellm`), provider keys (`CEREBRAS_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) | `llm-gateway` only |
-| `.env.db` | `POSTGRES_PASSWORD`, `MIGRATIONS_DATABASE_URL` (superuser), `FAZE_ODYSSEY_DB_PASSWORD`, `FAZE_LAB_DB_PASSWORD`, `FAZE_RELAY_DB_PASSWORD`, `LITELLM_DB_PASSWORD` | `postgres`, `migrate`, the seed command |
-| `.env.web` | `ODYSSEY_API_URL`, `SIGNAL_LAB_API_URL`, `DEV_AUTH_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` (public by design) | Both web apps; no server secrets |
+| `.env` | `APP_ENV`, `DEMO_MODE`, `REDIS_URL`, `SUPABASE_*`, `JWT_ISSUER`, `JWT_AUDIENCE`, `DEV_AUTH_URL`, `LITELLM_URL`, the public service URLs, `MUX_*` | Both APIs, both workers, dev-auth. Non-secret settings, plus today the database passwords and app secrets (see below) |
+| `.env.lab` | `LITELLM_MASTER_KEY` | Signal Lab API and workers only (they create and delete run keys; Signal Lab's admin path creates MiroFish's key) |
+| `.env.llm` | `GEMINI_API_KEY`, `GEMINI_FLASH_MODEL`, `GEMINI_FLASH_LITE_MODEL`, `LITELLM_MASTER_KEY`, `LITELLM_SALT_KEY`, `LITELLM_DATABASE_URL` | `llm-gateway` only |
+| `.env.mirofish` | `ZEP_API_KEY` | `infra/mirofish/render_env.py` only |
+| `infra/mirofish/.env.runtime` | `LLM_API_KEY` (MiroFish's virtual key), `LLM_BASE_URL`, `LLM_MODEL_NAME=analyst`, `ZEP_API_KEY`, round and tool-call caps | The MiroFish container only. Rendered, mode 600 |
+| `.local/secrets/mirofish-virtual-key` | The MiroFish virtual key | `render_env.py` and revocation only |
 
-The Odyssey processes never receive `LITELLM_MASTER_KEY` or a provider key, and the web apps receive no server secret (FR-1.3). `ODYSSEY_INTERNAL_TOKEN_SECRET` sits in `.env` as in Ch. 20: Signal Lab and the workers sign service tokens with it and Odyssey verifies them. Settings classes (pydantic-settings) read only process environment variables, never files, so isolation depends only on which files a process is started with. The web apps learn `DEMO_MODE` and integration modes at run time from `GET /api/v1/status`, so images are not built per mode.
+Today `.env` also holds `OWNER_DB_PASSWORD`, `ODYSSEY_DB_PASSWORD`, `LAB_DB_PASSWORD`, `RELAY_DB_PASSWORD`, `WORKERS_DB_PASSWORD`, `ODYSSEY_INTERNAL_TOKEN_SECRET`, `IP_HASH_SECRET` and `COUNCIL_LINK_SECRET`, so every process that reads `.env` can read every role's password. Least privilege (NFR-1, FR-1.3) needs the split in CC-2: `.env` keeps only non-secret settings; `.env.odyssey` (Odyssey password, `IP_HASH_SECRET`, `COUNCIL_LINK_SECRET`, token secret) reaches only Odyssey processes; `.env.lab.db` or an extension of `.env.lab` carries `LAB_DB_PASSWORD` and `WORKERS_DB_PASSWORD` for Signal Lab and the workers; `.env.relay` carries `RELAY_DB_PASSWORD` for the relay; `.env.db` carries the owner password for migrations, seeds and the `postgres` container. The Odyssey processes never receive `LITELLM_MASTER_KEY` or a provider key, and the web apps receive no server secret.
+
+`ODYSSEY_INTERNAL_TOKEN_SECRET` is shared by the signers (Signal Lab, workers) and the verifier (Odyssey internal) and must be at least 32 characters, which the internal app's startup checks. Settings classes read process environment plus the files named in `ENV_FILE`, so which files a process receives decides what it can read. The web apps learn `DEMO_MODE` and integration modes at run time from `GET /api/v1/status`, so images are not built per mode.
 
 ### 3.4 Compose file
 
-`infra/docker-compose.yml` defines `postgres`, `redis`, `llm-gateway`, `migrate`, `odyssey-api`, `odyssey-internal`, `signal-lab-api`, `workers`, `scrim-worker`, `dev-auth` (profile `demo`, so `make compose-up` adds `--profile demo` when `DEMO_MODE=1`), `odyssey-web` (`3001:3000`) and `signal-lab-web` (`3002:3000`). Every third-party image is `name:tag@sha256:digest` from section 1. Our images build from `infra/docker/python.Dockerfile` (one file, `--build-arg PACKAGE=odyssey-api` and so on, running `uv sync --frozen --no-dev --package $PACKAGE`) and `infra/docker/web.Dockerfile` (`npm ci`, `next build`). Both Dockerfiles pin their `FROM` images by digest. `postgres` mounts `infra/db/init.sh` into `/docker-entrypoint-initdb.d/`, which creates the `litellm` database and role for LiteLLM's own data. `migrate` runs `alembic upgrade heads` once `postgres` is healthy, and the API and worker services depend on `migrate` with `condition: service_completed_successfully`, so `up` runs migrations (FR-1.2). `odyssey-api` mounts `seeds/media/hls` read-only for fixture playback. `llm-gateway` mounts `infra/litellm/config.yaml` read-only and runs `--config /app/config.yaml --port 4000`.
+`infra/docker-compose.yml` already defines `postgres` (pgvector image, init script creating the `litellm` database and role, no host port), `redis` (no host port) and `llm-gateway` (`127.0.0.1:4000`, `env_file: .env.llm`, health-checked, on `default` and `faze-mirofish-net`). The network `faze-mirofish-net` (fixed name) is created by this file and joined as `external: true` by `infra/mirofish/compose.yml`, so the main stack must be up first. Every third-party image is pinned by digest, and the file's header states the Colima limits.
+
+The remaining services are added as their images are written: `migrate` (one-shot, runs the four Alembic environments as the owner role, and runs after the `vector` extension is created by `infra/postgres/init`, CC-3), `odyssey-api`, `odyssey-internal`, `signal-lab-api`, `workers`, `scrim-worker`, `dev-auth` and `fixture-gateway` (profile `demo`), `odyssey-web` (`3001:3000`) and `signal-lab-web` (`3002:3000`). API and worker services depend on `migrate` with `condition: service_completed_successfully`, so `up` runs migrations (FR-1.2). Each service gets only its own `env_file` list from 3.3. Application images build from `infra/docker/python.Dockerfile` (one file, `--build-arg PACKAGE=…`, `uv sync --frozen --no-dev --package $PACKAGE`) and `infra/docker/web.Dockerfile`. The native Redis is 8.x while compose pins 7 (A-31); arq works on both.
 
 ### 3.5 Native run path
 
-No Docker engine exists here (2.2), so the native path is the one validated. `make setup` runs `uv sync --frozen --all-packages` and `npm ci`. `make db-up` documents starting Homebrew PostgreSQL 16 and Redis (installed only with the user's approval, Q-1). `make migrate` runs Alembic with `MIGRATIONS_DATABASE_URL`. `make dev` runs `honcho start -f Procfile.dev`, one line per process in 3.1, each wrapped in `scripts/with_env.py infra/.env infra/.env.odyssey -- <command>` so a process gets only the files listed for it in 3.3. `make health` checks every HTTP `/healthz` and runs `arq --check` for both workers (AC-2).
+The native path is the fast path for tests and development (FR-1.4). `make setup` creates the environment files, runs `uv sync` and `npm install`. `make db-install` builds pgvector against Homebrew PostgreSQL 16 and starts PostgreSQL and Redis, and `make db-up` starts them and creates the roles and databases (`faze`, plus `faze_test` for pytest). `make migrate` upgrades all four schemas. A `make dev` target (to add, CC-4) starts every process in 3.1 on the host, each with only its own env files, and `make health` checks each `/health` endpoint and `arq --check` for both workers (AC-2). The compose path is the path for the stage run and for MiroFish, which only runs in Docker, and the final report states which path each result came from (AC-2).
 
 ### 3.6 Integration modes and startup rules
 
-`faze_common.settings.resolve_modes()` runs at process start and returns one mode per integration. The result is logged once at INFO and served by `GET /v1/status` (Odyssey public), `GET /internal/v1/status` and `GET /v1/status` (Signal Lab, which merges Odyssey's).
+`faze_common.modes.resolve_modes()` (to add) runs at process start and returns one mode per integration. The result is logged once at INFO and served by `GET /v1/status` (Odyssey public, Signal Lab) and `GET /internal/v1/status`.
 
 | Integration | Live when | Fixture when (`DEMO_MODE=1` only) | `DEMO_MODE=0` and not live |
 | --- | --- | --- | --- |
-| Auth | `SUPABASE_URL` and `SUPABASE_JWKS_URL` set | `DEV_AUTH_URL` set; dev-auth JWKS | Refuse to start: `auth not configured` |
+| Auth | `SUPABASE_URL` and `SUPABASE_JWKS_URL` set | dev-auth JWKS | The code refuses to start with a clear message |
 | Media | `MUX_TOKEN_ID` and `MUX_TOKEN_SECRET` set | Local HLS under `/media/` | Refuse to start |
-| LLM gateway (Signal Lab, workers) | `LITELLM_URL` and `LITELLM_MASTER_KEY` set | Fixture model transport | Refuse to start |
-| MiroFish | `MIROFISH_URL` answers `GET` within 2 s (checked per status request, cached 30 s) | Reported `not-connected` | Reported `not-connected`; never blocks start |
-| Email | No real provider in the MVP (A-22) | Dev mailbox in Redis | Reported `disabled`; the 14–15 guardian step answers 503 `email-unavailable` |
+| LLM gateway | `LLM_BACKEND=router`, the router answers, and the pre-flight in 3.17 passed for every configured model | `LLM_BACKEND=fixture`: the fixture gateway | Refuse to start |
+| MiroFish and Zep | `MIROFISH_BACKEND_URL` answers its health route and its memory configuration is present | None. Reported `unreachable` | Reported `unreachable`; never blocks start, never fixture |
+| Email | No real provider in the MVP (A-22) | Dev mailbox | Reported `disabled`; the 14 to 15 guardian step answers 503 `email-unavailable` |
 
-Further rules (FR-21.1, AC-7). `APP_ENV=production` with `DEMO_MODE=1` stops every process with `DEMO_MODE cannot run in production`. With `DEMO_MODE=0` the advance route, the dev mailbox route, the reporting-window route and dev-auth are not mounted, so they return 404. A startup refusal prints one ERROR log line naming the missing variables and exits with status 78 (`EX_CONFIG`). Fixture adapters are constructed only inside the `DEMO_MODE=1` branch, so no code path can fall back to a fixture in live mode. Startup checks look at configuration presence, not reachability, so a test can start a `DEMO_MODE=0` app with placeholder live settings to check that demo routes are absent.
+Further rules (FR-21.1, AC-7). The code already refuses `DEMO_MODE=1` when `APP_ENV` is `prod` or `production`, and refuses `DEMO_MODE=0` without `SUPABASE_URL`. With `DEMO_MODE=0` the advance route, the dev mailbox route and the reporting-window route are not registered (they return 404) and dev-auth does not start. A startup refusal raises with one clear message naming the variables and exits non-zero; it never names a value. Fixture adapters are constructed only inside the `DEMO_MODE=1` branch, so no path falls back to a fixture in live mode. Startup checks look at configuration presence, not reachability, so a test can start a `DEMO_MODE=0` app with placeholder live settings to check that demo routes are absent.
 
-Offline operation (NFR-6): every process runs with `NEXT_TELEMETRY_DISABLED=1`, `DO_NOT_TRACK=1`, `HF_HUB_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1` and `TRANSFORMERS_OFFLINE=1`, and the scrim worker clears `AGENTOPS_API_KEY`, `LANGFUSE_ENABLED` and `TRACEROOT_ENABLED`, the switches CAMEL 0.2.90 reads to enable outside tracing.
+Offline operation (NFR-6): every process runs with `NEXT_TELEMETRY_DISABLED=1`, `DO_NOT_TRACK=1`, `HF_HUB_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1` and `TRANSFORMERS_OFFLINE=1`, and the scrim worker clears `AGENTOPS_API_KEY`, `LANGFUSE_ENABLED` and `TRACEROOT_ENABLED`, the switches CAMEL 0.2.90 reads to enable outside tracing. The one stage step that needs the internet is the MiroFish chat (NFR-6).
+
+### 3.7 Docker engine and resource limits
+
+The engine is Colima, started as `colima start --cpu 4 --memory 8 --disk 30` (a `make colima-up` target, CC-4), with Homebrew's `docker` and `docker-compose`. The user's ceiling is 4 CPUs, 8 GiB and 30 GiB, and nothing may exceed it without asking (D-7). AC-75 is checked by recording `colima status` and `docker info` (CPUs and total memory) and `docker system df` (image and volume sizes) in the report. A memory plan for the 8 GiB:
+
+| Container group | Planned share | Note |
+| --- | --- | --- |
+| postgres, redis | about 0.5 GiB | no host ports |
+| llm-gateway (LiteLLM) | about 1 GiB | one worker |
+| MiroFish (backend and Vite dev server in one container) | about 2 GiB | built once, state in a volume |
+| odyssey-api, odyssey-internal, signal-lab-api, workers, web apps | about 2.5 GiB together | |
+| scrim-worker (torch, OASIS) | about 2 GiB | started on demand, and never together with a MiroFish build |
+
+The workers image and MiroFish's image each carry torch, so the sum of images must stay inside 30 GiB (3.6 GiB at the checkpoint). If a limit proves too tight, the design response is to stop the scrim worker or build MiroFish alone, not to raise a limit.
+
+### 3.8 Ports and networks at a glance
+
+| Port | What | Reachable from |
+| --- | --- | --- |
+| 3000, 5001 | MiroFish frontend and backend | Host loopback only |
+| 3001, 3002 | Odyssey web, Signal Lab web | 3001 on the LAN (phone check); 3002 loopback |
+| 4000 | LiteLLM router | Host loopback; `llm-gateway` DNS name on `faze-mirofish-net` and `default` |
+| 4010 | Fixture gateway (`DEMO_MODE=1`) | Host loopback |
+| 8001, 8002, 8003, 8011 | Odyssey public, Signal Lab API, dev-auth, Odyssey internal | Host loopback natively; no host port in compose |
+| 5432, 6379 | Native PostgreSQL and Redis | Host loopback. The compose copies publish nothing, so the two never collide (FR-1.2) |
+
+`faze-mirofish-net` is joined only by `llm-gateway` and MiroFish, so from inside MiroFish's container PostgreSQL, Redis and the APIs do not resolve and cannot be reached (FR-18.2, AC-62). Verification runs `docker exec` connection attempts to `postgres:5432`, `redis:6379` and the API ports and expects every one to fail.
+
+### 3.9 Where the code cites the design
+
+The existing code and plan cite section numbers from the earlier design. These numbers stay valid:
+
+| Cited | Meaning | Section here |
+| --- | --- | --- |
+| 3.2 | Shared construction of public and internal listeners | 3.2, 6.1 |
+| 3.6 | Lock, open, close, publish, vote transactions | 6.3 |
+| 3.7 | Idempotency keys | 5.2 |
+| 3.9 | Server-sent events | 6.4 |
+| 3.16 | Live MiroFish deployment | 3.16 |
+| 3.17 | Live LLM token policy and ledger | 3.17 |
+
+Numbers 3.10 to 3.15 are unused on purpose, so the two citations that matter do not move.
+
+### 3.16 Live MiroFish deployment (FR-18, D-3, D-5, D-9)
+
+MiroFish is a third-party multi-agent simulation tool. The design runs the real thing and never substitutes for it.
+
+**Pin and build.** `infra/mirofish/fetch.sh` (to add) clones `https://github.com/666ghj/MiroFish` into the gitignored `infra/mirofish/checkout/`, checks out `v0.1.2`, fails unless `HEAD` is `985f89f49acbb44ee14d9d680682c741a44eeebe`, and builds `faze/mirofish:v0.1.2-985f89f` from the checkout's own Dockerfile (a `python:3.11` image with Node, `uv`, `npm ci` and `uv sync --frozen`, serving the frontend on 3000 and the backend on 5001 from one container). The upstream compose file uses the moving `ghcr.io/666ghj/mirofish:latest`, so it is not used. The AGPL-3.0 source stays outside the tracked tree (FR-18.1). The image has already been built once (3.6 GiB of images in total).
+
+**Run.** `docker compose -f infra/mirofish/compose.yml up -d` starts one service on `faze-mirofish-net` (created by the main stack), publishing `127.0.0.1:3000` and `127.0.0.1:5001`, with the volume `mirofish-uploads` holding projects, simulations and reports so they survive restarts. The container env comes from `infra/mirofish/.env.runtime`, which `render_env.py` writes at mode 600 from two gitignored inputs: `ZEP_API_KEY` from `infra/.env.mirofish` and MiroFish's virtual key from `.local/secrets/mirofish-virtual-key`. The values are `LLM_BASE_URL=http://llm-gateway:4000/v1`, `LLM_MODEL_NAME=analyst`, `OASIS_DEFAULT_MAX_ROUNDS=3`, `REPORT_AGENT_MAX_TOOL_CALLS=2` and `REPORT_AGENT_MAX_REFLECTION_ROUNDS=1`. MiroFish never receives the master key or the Gemini key (FR-18.3).
+
+**Router key.** `provision_key.py` asks the router (through `LiteLLMAdmin`, with the master key from `.env.lab`) for a key with alias `mirofish`, models `["analyst"]`, and the `max_budget`, `rpm_limit` and `tpm_limit` from `config/live-budgets.json`. The key is written once to `.local/secrets/mirofish-virtual-key`; `--rotate` deletes and replaces it, and `make mirofish-revoke` (to add) deletes it from the router. `render_env.py --placeholder-llm-key` writes a non-working key so the container can boot for health checks; it never counts toward verification, and a call that needs the LLM then fails honestly. The user's role name `mirofish-live` is the model-map entry for this use; the router alias MiroFish calls is `analyst`, so it runs on the same model as the analyst and judge roles.
+
+**Memory service and content boundary.** v0.1.2 requires Zep Cloud. `scripts/check_zep.py` already proves the key authenticates and can list graphs (chain step 1, verified live on 2026-11-14); the Zep project contains one graph that is not ours, which the design never touches. Everything MiroFish builds uses a graph name prefixed `faze-`, and the name MiroFish assigns is recorded so teardown deletes only graphs this project made. The only content that reaches Zep or the LLM from this project is the sandbox pack, an allowlist in `seeds/mirofish-pack/manifest.json` (file names with SHA-256): the two brief variants and the public Lore facts from the source document with their links, excluding the demo-authored hostile fact. `infra/mirofish/bootstrap.py` uploads only files listed in the manifest and refuses a file whose hash differs. `tests/repo/test_pack_allowlist.py` scans the pack for account IDs, email addresses, Fan Council answers, votes and Scrims output, and fails on any (AC-65, AC-72).
+
+**Pre-built project.** `make mirofish-build` (live, needs `CONFIRM_LIVE=1`) runs MiroFish's own workflow through its HTTP API with at most about 10 agents and 3 rounds (A-38): `POST /api/graph/ontology/generate` (uploads the pack and creates the project), `POST /api/graph/build` and polling `GET /api/graph/task/<id>`, `GET /api/graph/data/<graph_id>` for node and edge counts, `POST /api/simulation/create`, `/prepare` with `/prepare/status`, then `/start` with `platform` `twitter` and `max_rounds` 3, polling `GET /api/simulation/<id>/run-status`. The exact request bodies and whether the environment stays alive for interviews are confirmed against the pinned checkout in plan step P11, because the interview call needs the simulation environment alive after its loop (`/env-status`). The script prints the ledger delta for the build and stops at the ceiling. It stores identifiers in `lab.mirofish_project` (pin, project, graph, simulation, interviewed agent, Zep graph name) through the owner path of the seed, never secrets, and `make seed` refers to those identifiers without building anything (FR-21.2). A documented teardown deletes the project, the volume and the Zep graph it created.
+
+**Readiness check.** `make mirofish-ready` makes no LLM request (AC-61): the frontend answers 200 on 3000, `GET /health` on 5001 returns `{"status":"ok"}`, the runtime env holds a non-placeholder Zep key (checked by length and prefix, never printed), the stored project and graph load (a Zep read, not an LLM call), `/env-status` reports the simulation alive, and `LiteLLMAdmin.key_info` shows budget left on key alias `mirofish`. Stage readiness requires it to pass, and it also prints whether the provider and Zep are reachable (NFR-6).
+
+**Signal Lab panel and chat (FR-18.7).** `GET /v1/mirofish` (analyst, producer) returns `{state: "live" | "unreachable" | "backup", pin, model_alias, budget_remaining_usd, frontend_url, project_id, checked_at}`, computed per request and cached 15 s. `POST /v1/mirofish/chat` takes `{question}` (1 to 500 characters), checks that the state is `live`, and calls the MiroFish backend's interview endpoint for the stored simulation and returning-fan agent with a 120 s timeout. The reply is returned exactly as MiroFish sent it, with the agent, the time and the router request ID, which Signal Lab reads from the router's spend log for key alias `mirofish` after the call. Replies are never cached, templated or written by Signal Lab. The limits are 5 requests per minute per analyst and, for verification runs, two messages in total. If the backend or Zep cannot be reached the response is 503 `mirofish-unreachable`; if MiroFish answers with an error or an empty reply it is 502 `mirofish-chat-failed`; neither carries invented text. The page shows the deep link to the pre-built project in MiroFish's own UI beside the chat box.
+
+**Emergency backup (FR-18.11).** A backup exists only as a capture of a real chat from a verification run, saved to `.local/backup/mirofish-chat-capture.json` (question, reply, agent, time, request ID, no keys). It is off by default and is switched on only by an explicit operator action, `POST /v1/mirofish/backup/enable` with the literal confirmation `BACKUP` (producer role), recorded in `lab.mirofish_project.notes` with the actor and time. It is never enabled by a failure. While it is on, the panel shows a persistent banner reading "RECORDED BACKUP, NOT LIVE", the status reads `backup`, and the stage test and report mark the run `live_verified = false`. A test shows it is off after seed and after a failure (AC-66, AC-74). A repository scan finds no NetworkX or mock wired into the MiroFish path.
+
+**Unreachable behaviour (AC-66).** With MiroFish stopped, `GET /v1/mirofish` reports `unreachable`, the panel says so, the chat is disabled, step 3 of the stage test fails rather than skips, and nothing appears as MiroFish output.
+
+**Eight-step chain (FR-18.10, AC-73).** `scripts/verify_mirofish_chain.py` (`make verify-chain`, live, `CONFIRM_LIVE=1`) runs the steps in order against the real services, stops at the first failure and reports later steps as "not run". It writes `.local/evidence/chain-<timestamp>.json` with redacted evidence only:
+
+| Step | What it must touch | Evidence recorded |
+| --- | --- | --- |
+| 1 Zep auth and graph access | `api.getzep.com` through `check_zep.py` with a browser-like User-Agent (Cloudflare blocks Python's default one) | HTTP status of the project-info and graph-list calls |
+| 2 Gemini through LiteLLM | One 8-token completion on alias `analyst` through the router with a throwaway key | Router spend-log row and ledger entry |
+| 3 MiroFish project creation | `POST /api/graph/ontology/generate` on the live backend | Project ID |
+| 4 Graph construction | `POST /api/graph/build`, `GET /api/graph/data/<id>` | Node and edge counts |
+| 5 Simulation prepare and start | `/prepare`, `/start` | Status moves to `running` |
+| 6 Active OASIS simulation | `/run-status` and the run's own database | Action count growing across two polls |
+| 7 Live chat | The interview call for the returning-fan agent | Reply text, and the router spend-log row under alias `mirofish` |
+| 8 Reply in the stage flow | Playwright on Signal Lab, with `STAGE_CHAT=1` | Screenshot and video of the reply inside the panel |
+
+Steps 3 to 6 are produced by the build run (`make mirofish-build`), which writes their evidence with timestamps; `verify-chain` re-reads the project, graph counts and run status from the live services and fails if they no longer match, so a stale or mocked record cannot pass. Reading code or a mock's logs never counts, and success is reported only when all eight passed (AC-73).
+
+**Redaction (FR-18.12).** Every script in this group sends output through `scripts/secretsafe.redact` (known values plus key-shaped patterns for Gemini, Zep and `sk-` virtual keys). Playwright runs with trace, screenshot and video retention checked by a scan that fails on any key pattern in the artifact folder (AC-71).
+
+### 3.17 Live LLM token policy, ledger and model pre-flight (NFR-10, FR-11.5, D-4, D-6)
+
+The user's Gemini key is token-limited, and its quota is unknown. Live use is therefore deliberate, small and measured, and everything else runs on the fixture gateway or on replay.
+
+**Model map (Q-9, approved by the user).** The two 2.5 models the user first named return 404 "no longer available to new users" on generation, although `models.get` lists them. The API names `gemini-3.8-flash` and `gemini-3.5-flash-lite` as successors. If and only if both pass the pre-flight below, the router maps:
+
+| Alias or role | Model | Reasoning |
+| --- | --- | --- |
+| `bots-fast` | `gemini-3.5-flash-lite` | disabled where the model supports it |
+| `bots-backup` | `gemini-3.8-flash` | disabled where supported |
+| `judge` | `gemini-3.8-flash` | disabled where supported |
+| `analyst` | `gemini-3.8-flash` | disabled where supported |
+| `mirofish-live` (MiroFish's role) | `gemini-3.8-flash`, reached as alias `analyst` on the virtual key `mirofish` | disabled where supported |
+| `bots-local` | defined, unconfigured, reported as such | n/a |
+
+In `infra/.env.llm` that is `GEMINI_FLASH_LITE_MODEL=gemini/gemini-3.5-flash-lite` and `GEMINI_FLASH_MODEL=gemini/gemini-3.8-flash`. The router config already reads both from the environment, so choosing them is not a code change. The 2.5 models stay unconfigured.
+
+**Pre-flight (FR-11.5, AC-76).** This design only specifies it. The implementation step runs it, once the checkpoint exists:
+
+1. `make live-check-gemini CONFIRM_LIVE=1 MODELS=gemini-3.8-flash,gemini-3.5-flash-lite`, models tested sequentially in that order.
+2. Per model: the free `models.get` and `countTokens` calls, then one `generateContent` request with `maxOutputTokens` 8, temperature 0 and reasoning disabled where the model accepts a setting for it. One attempt only, a 120 s timeout, no automatic or hidden retries, no second request after a 4xx.
+3. The generated text is never printed or stored. Headers and credentials are never printed. The key travels only in the `x-goog-api-key` header of the request to Google.
+4. A success writes a ledger row with prompt, visible output and thinking tokens. A failure writes a ledger row with its category: `timeout`, `http_404`, `http_400`, `quota` (429), `refused` or `error`.
+5. A timeout on the first model does not stop the second. A model that times out twice is recorded `unavailable for this environment`, and no further models are tried without asking the user (AC-67).
+6. If `gemini-3.8-flash` is unavailable, the analyst, judge, backup and MiroFish roles have no model, and every live step that needs one reports "not verified: no usable model". If only `gemini-3.5-flash-lite` fails, the bots role falls back to `gemini-3.8-flash` after the user is asked.
+
+State on 2026-11-15 (recorded, not repeated here): `gemini-3.8-flash` passed `models.get` (input limit 1,048,576, output limit 65,536) and `countTokens`. Its first generation attempt, at the script's 30 s limit, timed out and wrote no ledger row. `gemini-3.5-flash-lite` was not reached. The user then approved one retry per model at 120 s, which is the step above. The earlier result of the 2.5 models (HTTP 404 on generation) is the reason for Q-9.
+
+**Reasoning tokens.** Hidden reasoning counts against the key. The config disables it per alias with `reasoning_effort` where the provider and LiteLLM accept it; Gemini 3 models may use a level instead of a budget, so the exact setting is taken from the pre-flight's usage numbers, not guessed. If a model cannot disable reasoning, the ledger shows its thinking tokens separately, `max_tokens` headroom is raised for that alias, and the ceilings below are re-set from measurement before any live check that uses it.
+
+**Prices and ceilings.** Each deployment keeps explicit per-token costs in the router config, set above published prices, so a USD budget binds even if LiteLLM has no price for the model. The current planning prices are $0.15 and $0.60 per million input and output tokens for the flash-lite role and $0.50 and $3.00 for the flash role. After the pre-flight, the implementation step checks them against the provider's published prices for the two 3.x models and raises any that are too low. Starting ceilings, in `config/live-budgets.json`:
+
+| Check | Key budget (USD) | rpm | tpm | Make target (live, `CONFIRM_LIVE=1`) |
+| --- | --- | --- | --- | --- |
+| Model pre-flight | none (two direct requests, about 100 tokens in total) | n/a | n/a | `live-check-gemini` (exists) |
+| MiroFish build and chat | 0.50 | 30 | 60,000 | `mirofish-build`, `verify-chain` (to add) |
+| Router smoke scrim (AC-68) | 0.05 | 30 | 40,000 | `live-scrim-smoke` (to add) |
+| Budget-binds check (AC-69) | 0.0004 | 10 | 10,000 | `live-budget-bind` (to add) |
+| All live checks together | | | 400,000 tokens | enforced by the ledger gate |
+
+These are starting values. The first measured run replaces each with the measured cost plus headroom, the file records the date and the source of the change, and the final report totals tokens and spend against them (AC-60).
+
+**Ledger and gate.** `.local/token-ledger.jsonl` (gitignored, no secrets) holds one row per live request or per aggregated check: timestamp, check name, model, prompt tokens, completion tokens, thinking tokens, status category and note. The existing `secretsafe.ledger_append` records the first five; the status and thinking fields are added (CC-5). Before any live target runs it prints its ceiling and calls the gate, which refuses when `ledger_total() + ceiling` exceeds the 400,000-token total, or when the target is run without `CONFIRM_LIVE=1` (the existing `live-check-gemini` already refuses). The first quota or rate-limit error ends all live work and the report says "not verified: quota", and no check then falls back to a fixture while claiming to be live (AC-67).
+
+**Default targets spend nothing (AC-70).** `make test`, `make check` and the Playwright run without `CONFIRM_LIVE` start the fixture gateway or a mocked router, and the test harness patches name resolution and `socket.connect` to refuse and record any non-loopback connection, with a specific assertion that `generativelanguage.googleapis.com` and `api.getzep.com` were never contacted. Recording runs through the router happen once, small, in AC-68, then replay at no cost. MiroFish cannot replay, so its chat is the only repeated live call, and verification sends at most two messages per run.
+
+**Data egress (NFR-11, AC-72).** The provider receives only synthetic personas, public text and brief text. A test inspects the recorded requests of the smoke scrim and the MiroFish build inputs and fails on any account ID, email address, vote, Fan Council answer or first-party analytic value.
+
+**Key handling (AC-71).** The Gemini and Zep keys exist only in `infra/.env.llm` and `infra/.env.mirofish` (mode 600, gitignored since before they were written). `scripts/secret_scan.py` (to add; the Makefile already calls it) searches tracked and unignored files, git history, logs and test artifacts for the exact values loaded from those files and for key-shaped patterns, without printing them. Both keys were pasted into a chat transcript, so the report tells the user to rotate them after the hackathon.
+
 
 ## 4. Data layer
 
 ### 4.1 Database roles and grants
 
-One database, `faze`, holds the four schemas. LiteLLM uses a separate database, `litellm`, with its own role (FR-1.2). The base migration creates the three service roles if they are missing, as `LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE`, and sets their passwords from `FAZE_*_DB_PASSWORD` when present. The password literal is rendered by the SQLAlchemy dialect's quoting, never by string formatting. Roles are cluster-wide, so downgrading to base revokes privileges but leaves the roles; `make db-drop-roles` removes them.
+One database, `faze`, holds the four schemas, and `faze_test` holds the same schemas for pytest. LiteLLM uses a separate database, `litellm`, with its own role, created by `infra/postgres/init/01-litellm.sh` in compose (FR-1.2). `scripts/local_db.sh` creates the roles natively with passwords from `infra/.env`, and creates the `vector` extension once as the local superuser, so no application role needs superuser rights. The role names are the code's.
 
-| Role | Used by | Privileges |
-| --- | --- | --- |
-| migration superuser | Alembic, `make seed` | Owns all objects; the only role with `TRUNCATE` |
-| `faze_odyssey` | Odyssey public and internal | `USAGE` on `odyssey` and its sequences; `SELECT, INSERT, UPDATE` on its tables; `DELETE` only on `idempotency_keys`; `INSERT` only on `outbox`; `SELECT` only on the transition reference tables. Nothing on `lab`, `lore`, `wh` |
-| `faze_lab` | Signal Lab API, both workers | `USAGE` on `lab`, `lore`, `wh` and on `lab` sequences; full DML on `lab`; `SELECT` on `lore` and `wh.events`; `SELECT, INSERT` on `wh.outcome_sets` plus `UPDATE (week2_return, week2_frozen_at)`. Nothing on `odyssey` |
-| `faze_relay` | Core worker's relay job only | `USAGE` on `odyssey`, `wh`; `SELECT` and `UPDATE (published_at)` on `odyssey.outbox`; `INSERT` on `wh.events`. Nothing else |
+| Role | Used by | Grants today (migrations) | Grants required by revision 3 |
+| --- | --- | --- | --- |
+| `faze_owner` | Alembic, `make seed`, tests that reset data | Owns all objects (`CREATEROLE`, no superuser) | Unchanged. The only role that may `TRUNCATE` |
+| `odyssey_app` | Odyssey public and internal | `USAGE` on `odyssey`; `SELECT, INSERT, UPDATE, DELETE` on all its tables; sequences. Nothing on `lab`, `lore`, `wh` | `DELETE` only on `idempotency_keys`; `INSERT` only on `outbox` (no update or delete); `SELECT` only on the three transition tables (CC-6) |
+| `lab_app` | Signal Lab API | `USAGE` on `lab`, `lore`, `wh`; full DML on `lab` and `lore`; `SELECT` on `wh`. Nothing on `odyssey` | `SELECT` only on `lore` (Lore has no write routes in the MVP; the seed writes as owner) (CC-6) |
+| `workers_rw` | Core and scrim workers | Full DML on `lab`; `SELECT` on `lore` and `wh.events`; `SELECT, INSERT, UPDATE` on `wh.outcome_sets` | `INSERT` only on `wh.outcome_sets` and the week-2 table (CC-7). Nothing on `odyssey` |
+| `relay` | The outbox relay job only | `SELECT (id, topic, payload, created_at, published_at)` and `UPDATE (published_at)` on `odyssey.outbox`; `INSERT` on `wh.events`; sequence usage | Unchanged. `FOR UPDATE SKIP LOCKED` needs a column `UPDATE` grant, which this provides |
+| `litellm` | The router | Owns the `litellm` database only | Unchanged |
 
-`SELECT ... FOR UPDATE SKIP LOCKED` needs `UPDATE` on at least one column, which the column grant on `published_at` provides, and `INSERT ... ON CONFLICT DO NOTHING` needs only `INSERT`. AC-4 connects as each role and probes `SELECT`, `INSERT`, `UPDATE` and `DELETE` on every table of each schema.
+AC-4 connects as each role and probes `SELECT`, `INSERT`, `UPDATE` and `DELETE` on every table of each schema, expecting the grants in the last column. The roles are cluster-wide, so the downgrade removes schemas and grants but leaves the roles; `make db-reset` recreates the local database.
 
 ### 4.2 Migrations
 
-`infra/migrations/alembic.ini` sets `version_locations` to `versions/base`, `versions/odyssey`, `versions/lab`, `versions/lore` and `versions/wh`, with one branch label per folder. Every schema branch `depends_on` the base revision, and the `wh` revision that grants the relay also depends on the first `odyssey` revision. `make migrate` runs `alembic upgrade heads`. `make migrate-roundtrip` creates a scratch database, upgrades to heads, downgrades to base, upgrades again and drops the database (AC-3). Migrations are hand-written: `op.create_table` for tables and `op.execute` for functions, triggers, grants and reference rows. Each service mirrors its tables as SQLAlchemy Core `Table` objects, and an integration test compares those objects with the migrated catalogue to catch drift. The base revision runs `CREATE EXTENSION IF NOT EXISTS vector`. pgvector's control file is not marked `trusted`, so this needs the superuser, which is why migrations run as one.
+Four independent Alembic environments share one script directory, `infra/migrations/_alembic`, and each has its own revision folder (`odyssey`, `lab`, `lore`, `wh`) and version table (`alembic_version_<schema>`). Each revision is a thin Python file that executes `0001_init.up.sql` or `0001_init.down.sql` on the connection, so the SQL is written and reviewed as SQL. `python infra/migrations/run.py upgrade` applies `odyssey`, `lab`, `lore`, `wh` in that order, `downgrade` reverses them to base, and `current` prints positions. It connects as `faze_owner` over psycopg 3, and `DATABASE_NAME` in the process environment overrides the database, which is how pytest migrates `faze_test`. The session fixture in `tests/conftest.py` runs downgrade then upgrade at the start of every test run, so each run proves AC-3.
 
-### 4.3 Schema `odyssey`
+Later revisions add files beside `0001`. The ones this design requires are in section 20.2 (CC-1, CC-6, CC-7 and the `lab` additions in 4.4). Services use `text()` SQL rather than table objects, so there is no table-mirroring drift test; instead, `tests/integration/test_states_and_auth.py` already compares the Python transition tables with the migrated reference rows, and a new catalogue test checks that every table the code reads or writes exists with the columns it names.
 
-Ch. 13's tables are kept with their columns. The table lists what this design adds or changes. All times are `timestamptz` in UTC.
+### 4.3 Schema `odyssey` (migration `odyssey_0001`, as built)
 
-| Table | Additions and changes to Ch. 13 |
-| --- | --- |
-| `accounts` (+) | `id uuid` primary key (the JWT `sub`), `handle text`, `created_at` (first time Odyssey saw the account; seeded for demo accounts), `analytics_consent boolean not null default false`, `consent_updated_at`. Upserted on write routes only (FR-2.7, A-23). |
-| `media_assets` (+) | `id`, `kind` (`reference`, `entry`, `intro`, `end_card`), `provider` (`mux`, `fixture`), `asset_id`, `playback_id not null`, `duration_ms`, `status` (`ready`, `processing`, `errored`). |
-| `campaigns` | Adds `season text`, `week int`, `announced boolean`, `paused_from campaign_state`, `state_version int` (bumped by trigger on every state change), `reference_asset_id`, `reference_marker_ms`, `intro_asset_id`, `end_card_asset_id`, `created_at`. `live_brief_id` references `brief_versions` (deferrable). `sponsor_id` holds a `lab.partners` ID without a cross-schema foreign key. |
-| `brief_versions` | Adds `created_at`, `created_by`; `variant in ('A','B')`; `rules` must hold `games` (1–10 strings), `max_clip_seconds` (3–120) and `what_to_send` (≤200 chars), checked by a `CHECK` on `jsonb` keys and by Pydantic. |
-| `entries` | Adds `media_asset_id`, `updated_at`; `state` check over the seven Ch. 13 states; `permissions` holds booleans `ownership`, `editorial_use`, `sponsor_reuse`, `channel_link`. |
-| `ballots` | `state in ('locked','open','paused','closed')`: `locked` is new and means finalists are fixed but voting has not opened. Adds `finalists_locked_at`, `opened_at`, `closed_at`, `created_by`, `created_at`. |
-| `ballot_finalists` | Adds `slot char(1) in ('A','B')` with `unique (ballot_id, slot)`, and `locked_playback_id not null` (the player needs the playback ID, not only the asset ID). |
-| `votes` | Adds `referral`, `ip_hash`, `age_band`; `voter_id` references `accounts`; `foreign key (ballot_id, entry_id) references ballot_finalists`, so a vote can only name a locked finalist. |
-| `episodes` | Adds `campaign_id`, `winner_entry_id`, `tie boolean`, `result jsonb` (the frozen tally, split and tie rule). `sim_vs_fans` holds only the aggregate prediction (FR-12.3). |
-| `episode_credits` (+) | `id` (the credit ID used by click tracking), `episode_id`, `entry_id`, `handle`, `channel_url` (null unless the creator opted in), `is_winner`. |
-| `vault_chapters` (+) | `id`, `episode_id unique`, `campaign_id`, `season`, `week`, `title`, `published_at`. Written by publish; no Vault UI (out of scope). |
-| `ballot_prediction_commitments` (+) | `ballot_id` primary key, `sha256 text check (sha256 ~ '^[0-9a-f]{64}$')`, `registered_at`, `registered_by`. A hash, not simulated output (AC-55). |
-| `council_questions`, `council_options` (+) | Seeded questions with fixed options (`id`, `prompt`, `position`). |
-| `council_members` | `user_id`, `birth_year`, `cohort` (`returning`, `newcomer`, `creator`, self-reported), `consent_version`, `guardian_email_hash` (HMAC-SHA256 with `COUNCIL_HASH_SECRET` over the trimmed, lowercased address) instead of the plaintext email, `guardian_confirmed_at`, `enrolled_at`. |
-| `council_answers` (+) | `member_id`, `question_id`, `option_id`, `answered_at`; primary key `(member_id, question_id)`. Never copied to the outbox. |
-| `council_consumed_links` (+) | `link_id_hash` primary key, `consumed_at`: makes guardian links single-use. Written only when a guardian confirms. |
-| `outbox` | Adds `event_id uuid unique not null`; `topic` limited to the catalogue in 6.8 by a `CHECK`. |
-| `idempotency_keys` | Adds `request_hash`, `response_status`, `response_body jsonb`, `expires_at`. |
-| `audit_log` (+) | `id bigserial`, `at`, `actor_id`, `actor_role`, `action`, `target_type`, `target_id`, `detail jsonb`: one row per staff-initiated change (FR-2.5). |
-| `campaign_transitions`, `ballot_transitions`, `entry_transitions` (+) | Reference rows `(from_state, to_state)` loaded by the migration from the Python tables in 6.2. A unit test asserts the migration rows equal the code tables. |
+Ch. 13's tables are kept. The table lists what the migration adds or changes, and the last column says whether revision 3 needs more. All times are `timestamptz`.
 
-### 4.4 Schema `lab`
+| Table | As built (additions to Ch. 13) | Revision 3 needs |
+| --- | --- | --- |
+| `accounts` | `user_id` primary key (JWT `sub`), `handle`, `role`, `analytics_consent` default false, `created_at` (first seen; seeded for demo accounts). Upserted on write routes (FR-2.7, A-23) | none |
+| `campaigns` | `slug` (pattern check), `format`, `title`, `state`, `paused_from`, `live_brief_id` (deferred FK), `reference_asset_id`, `reference_marker_ms`, `intro_asset_id`, `end_card_asset_id`, `reporting_window_end`, the four times, `sponsor_id`, `created_at`, `updated_at` | `season`, `week`, `announced` for the Lobby and week-2 lookup (CC-10) |
+| `brief_versions` | `variant in ('A','B')`, `body_md` up to 20,000, `rules`, `scrim_run_id`, `unique (campaign_id, variant)` | `rules` shape check (games, `max_clip_seconds`, `what_to_send`) |
+| `entries` | Ch. 13 columns plus `duration_ms`; the seven states; `permissions` jsonb (`editorial_use`, `channel_link`, and so on); `receipt_code` | none |
+| `ballots` | `state in ('open','paused','closed')`, `opens_at`, `closes_at`, `closed_at`, `tally`, `unique (campaign_id, version)`, `check (closes_at > opens_at)`. A ballot is created `open` by the lock, while the campaign is `shortlist_locked`; it takes votes only when the campaign is `voting` | none. Revision 1's extra `locked` state is dropped |
+| `ballot_finalists` | `label` A or B, `locked_asset_id`, `marker_ms`, `unique (ballot_id, label)`; update and delete refused by trigger; deferred trigger demands exactly two | `locked_playback_id` so the player needs no lookup (CC-10) |
+| `votes` | primary key `(ballot_id, voter_id)`, `entry_id`, `revision`, `referral`, `ip_hash`, `first_cast_at`, `updated_at`; composite FK to `ballot_finalists` | none. Account-age bands are computed at report time from `accounts.created_at` |
+| `sim_predictions` | `ballot_id` primary key, `predicted jsonb`, `scrim_run_id`, `registered_by`, `registered_at`; refused after close | Holds simulated output before close, which AC-55 forbids. Replace by a hash commitment (CC-1) |
+| `episodes` | `ballot_id` unique, `slug`, `winner_entry_id`, `tally`, `tie`, `no_votes`, `sequence`, `sim_vs_fans`, `published_at`; insert needs a closed ballot | none |
+| `credits` | `episode_id`, `entry_id`, `handle`, `channel_url` (null unless opted in), `role` winner or finalist, `position`; `unique (episode_id, entry_id)` | none |
+| `vault_chapters` | `episode_id` unique, `slug`, `era`, `title` | none (no Vault UI) |
+| `council_members` | `user_id`, `birth_year`, `consent_version`, `guardian_email`, `guardian_confirmed_at`, `cohort`, `enrolled_at`; a check that ages 14 to 15 exist only with a confirmed guardian | Store only a keyed hash of the guardian email, not the address (CC-9) |
+| `council_questions`, `council_answers` | questions with `kind` and `options`; answers keyed `(user_id, question_id)`, up to 500 characters | none. Answers never go to the outbox |
+| `outbox` | `id bigserial`, `topic`, `payload` (check: valid `event_id` UUID and integer `v`), `created_at`, `published_at`; partial index on unpublished rows | none |
+| `idempotency_keys` | `(scope, key)` primary key, `request_hash`, `status_code`, `response`, `created_at` | `expires_at` and a purge (CC-11) |
+| `campaign_transitions`, `ballot_transitions`, `entry_transitions` | Reference rows equal to `faze_common.states`; a test fails on drift | none |
+| `audit_log` | not built | One row per staff-initiated change (FR-2.5) (CC-10) |
 
-| Table | Contents (Ch. 13 and Ch. 18 columns kept) |
-| --- | --- |
-| `partners` (+), `partner_activations` (+) | Fictional sponsors (A-15); activations hold `partner_id`, `campaign_id`, `placements jsonb`, `approved_creative jsonb` (text only, no logo files) |
-| `brief_drafts` (+) | `(campaign_id, variant)` primary key, `body_md`, `rules`, `updated_by`, `updated_at`: Studio's editable variants (FR-9.2) |
-| `launches` (+) | `campaign_id` primary key, `variant`, `brief_version_id`, `scrim_run_id`, `launched_by`, `launched_at`: lets VOD and Partners find the launched variant's scrim without reading `odyssey` |
-| `cohort_sets` (+) | Seeded cohort weights `{"returning":0.5,"newcomer":0.3,"creator":0.2}` (A-32) |
-| `scrim_runs` | Adds `kind` (`brief_variants`, `finalist_poll`, `backtest_case`), `mode` (`record_live`, `record_fixture`, `replay`), `source_run_id` (replays), `parent_run_id` (polls reuse its bots), `case_id`, `config_hash`, `pipeline_version`, `persona_set_hash`, `replayed_cost_usd`, `progress jsonb`, `error jsonb`, `fixture boolean`, `created_by`, `started_at`. `status in ('queued','running','done','failed','over_budget')` |
-| `scrim_bots` | As Ch. 13; `persona` holds the template keys `cohort`, `era`, `games`, `tone`, `bio` and `lore`, plus `handle` and `name`, which go to OASIS's `UserInfo` instead of the template |
-| `scrim_network` (+) | `(run_id, follower_id, followee_id)`: the run's synthetic follower graph |
-| `scrim_observations` | As Ch. 13; `metrics` adds `active_by_round`, `interviewed`, `persona_set_hash`, `disallowed_tool_calls`, `judge_ungraded` |
-| `scrim_transcripts` (+) | `id`, `run_id`, `variant`, `seed`, `round`, `bot_id`, `kind` (`post`, `comment`, `quote`, `interview`, `poll`), `content`, `judge jsonb`, `ordinal` |
-| `scrim_oasis_traces` (+) | `(run_id, variant, seed)`, `sqlite_gz bytea`: OASIS's own database per play, kept for audits (FR-10.11) |
-| `llm_calls` | Adds `ordinal` (call order in the run), `model_version`, `http_status`; `request`, `response`, `cost_usd` as Ch. 13; unique `(run_id, request_hash, occurrence)` |
-| `forecasts` | Adds `scrim_run_id`, `variant`, `fixture` |
-| `calibration_models` | Adds `target` (`entrants`, `voters`, `week2_return`) and `drops int` |
-| `sim_predictions` (+) | `id`, `ballot_id unique`, `campaign_id`, `poll_run_id`, `prediction jsonb` (canonical form), `sha256`, `status` (`computing`, `ready`, `registered`, `too_late`, `failed`), `registered_at`, `error` |
-| `backtest_cases` | Adds `case_key`, `version`, `supersedes_id`, `mask_terms jsonb`, `placeholders jsonb` (fields the source does not supply, A-20), `scrim_run_id`, `forecast jsonb`, `forecast_locked_at`; primary key `id = '<case_key>-v<version>'` |
-| `backtest_runs`, `backtest_results` | As Ch. 18; runs add `status`, `scorecard jsonb`, `error`; results add `family`, `scorable boolean`, `fit_case_ids text[]` (the past cases its calibration used, for AC-42), `note` |
-| `idempotency_keys` (+) | Same shape as `odyssey.idempotency_keys`, for Signal Lab's own writes |
+### 4.4 Schema `lab` (migration `lab_0001`, as built, and additions)
+
+| Table | As built | Additions needed |
+| --- | --- | --- |
+| `partners`, `activations` | Fictional sponsors and their placements and approved creative | none |
+| `studio_campaigns`, `studio_variants` | Studio's campaign list and editable variants A and B | `launches` fields (variant, brief version, scrim run, actor, time) can live on `studio_campaigns` |
+| `scrim_runs` | Ch. 13 columns plus mode and config fields | `kind`, `mode`, `source_run_id`, `parent_run_id`, `config_hash`, `pipeline_version`, `persona_set_hash`, `replayed_cost_usd`, `progress`, `error`, `fixture` if not present (CC-12) |
+| `scrim_bots`, `scrim_observations`, `llm_calls`, `forecasts`, `calibration_models` | Ch. 13 | `llm_calls`: `ordinal`, `model_version`, `http_status`; `forecasts`: `scrim_run_id`, `variant`, `fixture`; `calibration_models`: `target`, `drops` |
+| `backtest_cases`, `backtest_runs`, `backtest_results` | Ch. 18, with a frozen-case trigger and a forecast-hash trigger | `results`: `family`, `scorable`, `fit_case_ids` |
+| `mirofish_project` | single row: `pin`, `project_id`, `graph_id`, `simulation_id`, `agent_id`, `zep_graph_name`, `notes`, `updated_at` | `notes` carries the backup switch with actor and time (3.16) |
+| not built | | `scrim_network`, `scrim_transcripts`, `scrim_oasis_traces`, `sim_predictions` (full prediction and status, section 9.8), `cohort_sets`, `idempotency_keys` for Signal Lab writes, `token_ledger_rollup` is not needed because the ledger is a file |
 
 ### 4.5 Schemas `lore` and `wh`
 
-`lore` follows Ch. 13. `facts` adds `known_from timestamptz not null` (the source's publication date for backfilled facts, A-27), `era`, `provenance` (`organizer_reported`, `third_party`, `demo`), `demo_authored boolean` and `note`; `aliases` gains an `id`. `chunks.embedding` stays `vector(1024)` and null in the MVP. The `as_of` rule lives in one SQL fragment, `valid @> :as_of and known_from <= :as_of`, used by both Lore search and the dossier builder (FR-16.3). `recorded_at` stays as the ingestion audit time and is not part of the rule.
+`lore` (as built) has `entities`, `aliases`, `facts` (valid `tstzrange` with a GiST index and `recorded_at`) and `chunks` (`vector(1024)`, null in the MVP). `facts` gains `known_from`, `era`, `provenance` and `demo_authored` (CC-10). The `as_of` rule is one SQL fragment, `valid @> :as_of and known_from <= :as_of`, used by both Lore search and the dossier builder (FR-16.3, A-27); `recorded_at` is the ingestion audit time and is not part of the rule.
 
-`wh.events` follows Ch. 13 and the relay fills `brief_version_id` too. `wh.outcome_sets` adds `week2_frozen_at` and `method jsonb` (event counts behind each number). `entrants`, `voters`, the window and `frozen_at` freeze when the row is written; `week2_return` may change exactly once, from null to a value, which sets `week2_frozen_at` (FR-13.3). Nothing updates or deletes `wh.events`.
+`wh` (as built) has `events` (Ch. 13, `event_id` primary key) and `outcome_sets` with `week2_return` and a trigger that refuses any update or delete once `frozen_at` is set. That makes a frozen outcome set immutable, as FR-13.3 says, but it also means week-2 return can never be filled in afterwards. The design keeps the outcome set immutable and adds `wh.week2_returns (campaign_id, brief_version_id, value, computed_at, primary key (campaign_id, brief_version_id))`, written once by the worker once the next window closes, and the VOD view shows "Pending" while that row is missing (CC-7). Nothing updates or deletes `wh.events`.
 
-### 4.6 Database guards
+### 4.6 Database guards (as built)
 
-The application checks every rule first and returns a precise problem response. The triggers below are the backstop that makes the same rules hold for direct SQL (AC-20, AC-42, FR-1.5). Each trigger raises a custom SQLSTATE in class `FZ` with `MESSAGE` set to a stable reason and `HINT` set to the problem slug. `faze_common.db.errors.problem_from_db_error()` reads `sqlstate` and `hint` from the asyncpg error (through SQLAlchemy's `orig.__cause__`) and maps it.
+The application checks every rule first and returns a precise problem. The triggers are the backstop that makes the same rules hold for direct SQL (AC-20, AC-42, FR-1.5). They raise SQLSTATE `P0001` with a message that starts with the problem slug (`illegal-transition:`, `ballot-closed`, `ballot-frozen:`, `ballot-locked:`, `brief-locked:`, `prediction-too-late:`, `outcomes-frozen:`, `case-frozen`), and `odyssey_api.db.map_db_error` turns the prefix into the matching problem response (409 for all of these). Revision 1's separate `FZ00x` codes are not used.
 
-| SQLSTATE | Meaning | Default problem |
-| --- | --- | --- |
-| `FZ001` | Transition not in the reference table | 409 `illegal-transition` |
-| `FZ002` | Change to a frozen or immutable row | 409 `record-frozen` (hint can name `case-frozen`, `finalists-locked`, `brief-locked`) |
-| `FZ003` | Transition precondition unmet | 409 `precondition-failed` |
-| `FZ004` | Campaign and ballot states disagree at commit | 500 `internal-error` (a bug, logged ERROR) |
-| `FZ005` | Finalist not eligible, or finalists already locked | 422 `finalist-ineligible` or 409 `finalists-locked` |
-| `FZ006` | Vote while the ballot is not open or past `closes_at` | 409 `ballot-closed` or `ballot-paused` |
-
-| Table | Trigger behaviour |
+| Table | Guard |
 | --- | --- |
-| `campaigns` | Insert only as `draft`. A state change must match `campaign_transitions` (FZ001), and these preconditions hold (FZ003): to `scheduled` needs `live_brief_id`; `shortlist_locked`→`voting` needs this campaign's ballot `open` with two finalists; to `closed` needs the ballot `closed`; to `published` needs an episode; to `paused` needs `paused_from = OLD.state`; from `paused` the target must equal `paused_from`, except `paused`→`closed` when `paused_from = 'voting'` and the ballot is `closed` (closing a paused ballot, FR-4.3); `paused_from` is then cleared. Bumps `state_version`. `live_brief_id` may change only while the state, or `paused_from` when paused, is `draft` or `scheduled` (FZ002 `brief-locked`). |
-| `brief_versions` | Rows are immutable versions: `UPDATE` and `DELETE` raise FZ002. |
-| `entries` | Insert only as `received`; state changes must match `entry_transitions`. |
-| `ballots` | Insert only as `locked`. `closed` is terminal: any update of a closed row raises FZ002. State changes must match `ballot_transitions`. Moving to `closed` requires `tally` and `closed_at`; `tally` cannot be set otherwise. `finalists_locked_at` goes from null to a value once; `opens_at` and `closes_at` are immutable after that (pausing never moves `closes_at`, A-5). |
-| `ballot_finalists` | Insert requires `finalists_locked_at is null` on the ballot, an entry from the same campaign in `in_review`, a `ready` media asset with a playback ID, and `permissions->>'editorial_use' = 'true'` (FZ005). Update and delete always raise FZ005. A deferred constraint trigger requires exactly two rows once `finalists_locked_at` is set. |
-| `campaigns` + `ballots` | A deferred constraint trigger checks agreement at commit: no ballot before `shortlist_locked`; `shortlist_locked` with none or `locked`; `voting` with `open`; `paused` with the ballot state its `paused_from` implies (`paused` when paused from `voting`); `closed`, `published` and `archived` with `closed`. |
-| `votes` | Insert or update needs the ballot `open` and `clock_timestamp() < closes_at` (FZ006). |
-| `episodes`, `episode_credits`, `vault_chapters`, `audit_log`, `llm_calls`, `backtest_results`, `calibration_models`, `ballot_prediction_commitments` | Append-only: update and delete raise FZ002. A commitment insert needs its ballot not `closed` (FZ003). An episode insert needs its ballot `closed`. |
-| `outbox` | The only allowed update sets `published_at` from null. |
-| `backtest_cases` | Update or delete of a row with `frozen_at` set raises FZ002 `case-frozen`. |
-| `wh.outcome_sets` | Delete raises FZ002; update may only set `week2_return` and `week2_frozen_at` from null. |
+| `campaigns` | A state change must be in `campaign_transitions`. `paused` records `paused_from`; leaving `paused` must return to `paused_from`, except `paused` to `closed` from `voting`. `voting` needs an open ballot with two finalists. Pausing from `voting` needs the ballot paused in the same transaction. `closed` needs a closed ballot and `published` needs an episode. `live_brief_id` cannot change once the state is past `scheduled`. |
+| `entries` | State changes must be in `entry_transitions` (`published`, `declined`, `withdrawn` are terminal). |
+| `ballots` | State changes must be in `ballot_transitions`. A closed ballot's `tally` and `closes_at` cannot change, and `closed` is terminal. |
+| `ballot_finalists` | Update and delete always refused. A deferred constraint trigger requires exactly two rows per ballot. |
+| `votes` | Insert or update takes the ballot row `FOR SHARE` and requires the ballot `open`, the campaign `voting`, and `opens_at <= clock_timestamp() < closes_at`, so a direct insert cannot slip past a close (FR-6.4). |
+| `sim_predictions` | Insert or update refused once the ballot is closed. Replaced by the commitment table in CC-1, with the same rule. |
+| `episodes` | Insert needs a closed ballot; `ballot_id` is unique. |
+| `lab.backtest_cases` | Update or delete of a frozen case is refused; a locked prospective forecast cannot change. |
+| `wh.outcome_sets` | Update or delete of a frozen row is refused. |
 
-Row-level triggers do not fire on `TRUNCATE`, and only the migration superuser holds `TRUNCATE`, which is how `make seed` resets frozen rows.
+A guard still missing, and needed: `outbox` accepts only the `published_at` update (the relay's), and `episodes`, `credits` and `audit_log` should refuse updates and deletes (CC-6). Row-level triggers do not fire on `TRUNCATE`, and only `faze_owner` holds it, which is how `make seed` resets frozen rows.
+
+> **Conformance note for sections 5 to 19.** Sections 3, 4, 10 and 12.4 and the change list in 20.2 are reconciled with requirements revision 3 and the code at `309a146`. Sections 5 to 9 and 11 to 16 keep their revision-1 detail (concurrency, idempotency, record/replay, budget, error, validation, invariant and test tables). Where that text disagrees with the code or with revision 3, this order wins: requirements revision 3, then 3.16 and 3.17, then the code as built, then this text. Known disagreements: the idempotency slugs and advisory-lock behaviour (code: `idempotency-key-required` 400, `invalid-idempotency-key` and `idempotency-key-reuse` 422, no in-progress response); guard errors (code: `P0001` with slug prefixes, not `FZ00x`); no `locked` ballot state; rate-limit defaults (code: vote account burst 5 at 1 per 6 s, per IP burst 60 at 2 per s); the guardian token (code: signed HS256 with `COUNCIL_LINK_SECRET`); routes (`/health`, `POST /v1/credits/click`, `POST /internal/v1/ballots/{id}/prediction`); fixture model (now the `fixture-gateway` service, 9.6); recorded-interview MiroFish fallback (removed, 3.16); and the `docker compose`/Compose schema fallback (removed). Each is either already fixed by this note or listed in 20.2.
 
 ## 5. Shared Python library (`faze_common`)
 
@@ -566,7 +693,7 @@ Roles follow FR-2.4 and deny by default: a route lists the roles it allows, and 
 | VOD Review | `GET /v1/vod/campaigns/{id}`, `POST /v1/vod/campaigns/{id}/end-window` (`DEMO_MODE` only), `GET /v1/vod/calibration`, `GET` and `POST /v1/vod/cases`, `GET` and `PATCH /v1/vod/cases/{id}`, `POST /v1/vod/cases/{id}/freeze`, `GET` and `POST /v1/vod/backtests`, `GET /v1/vod/backtests/{id}`, `POST /v1/vod/shadow` | analyst, producer | Optional on writes |
 | Partners | `GET /v1/partners/{id}`, `GET /v1/partners/{id}/activations`, `GET /v1/partners/{id}/scrims` | partner (own ID only), producer, analyst | — |
 | FaZe Lore | `GET /v1/lore/search?q=&as_of=&limit=` | analyst | — |
-| MiroFish | `GET /v1/mirofish` | analyst, producer | — |
+| MiroFish | `GET /v1/mirofish`, `POST /v1/mirofish/chat` (analyst, producer); `POST /v1/mirofish/backup/enable` (producer) | analyst, producer | Optional |
 
 Partner isolation (FR-15.2) is a dependency on every partner route: a `partner` principal whose `partner_id` claim differs from the path gets 404 `not-found`, so other partners' IDs are not confirmed, and every query also filters by the path's partner ID. Partner routes are `GET` only, and the router rejects other methods with 405. They never return transcripts, theme example quotes or bot identities.
 
@@ -596,7 +723,7 @@ Keys from the browser are not reused verbatim on multi-step operations. Signal L
 
 `GET /v1/lore/search` runs a parameterized `ILIKE` over entity names, aliases and fact predicates and values, applies the `as_of` rule from 4.5 (default: now) and returns at most `limit` (1–50, default 20) facts with `valid`, `known_from`, `source_url`, `provenance` and `demo_authored`.
 
-`GET /v1/mirofish` probes `MIROFISH_URL` (`GET`, 2 s timeout, cached 30 s). When it answers, the response is `{connected: true, url}`. Otherwise it is `{connected: false, recorded_interviews}`: from the launched run, or else the newest `done` `brief_variants` run, the first interviewed bot of the `returning` cohort at the lowest seed, with its `INTERVIEW` answers for variants A and B. Pairing guarantees the same bot was interviewed under both. Each answer carries `simulated: true`, `recorded: true` and `fixture` (FR-18.2). Signal Lab never fabricates a chat.
+`GET /v1/mirofish`, `POST /v1/mirofish/chat` and `POST /v1/mirofish/backup/enable` are specified in 3.16. There is no recorded-interview fallback: when MiroFish is unreachable the panel says `unreachable`, the chat answers 503, and nothing stands in (FR-18.7, FR-18.11).
 
 `GET /v1/status` merges Odyssey's internal status with Signal Lab's own modes (LLM gateway, MiroFish) and is what the header indicator shows (FR-21.4, FR-11.4).
 
@@ -732,7 +859,7 @@ The fixture path enforces the same cap with fixture costs, so AC-29 runs with no
 
 ### 9.6 Fixture model
 
-`scrim.fixture_model.FixtureModelTransport` answers OpenAI-format chat completions locally and deterministically (A-18). The run transport passes it the request hash from 9.5, which includes the play key, and the occurrence number, and its output depends only on those and the request body, through `u = int(sha256(request_hash + ":" + occurrence)[:12], 16) / 16**12`. The same prompt at a different seed therefore can still get a different answer, as a sampled model would. Responses report `model: "fixture-<alias>-v1"`, token usage as characters ÷ 4, and `x-fixture-cost-usd` at $0.10 per million prompt tokens and $0.40 per million completion tokens. Our own judge, analyst and probe prompts start with a `TASK: <name>` line, which the fixture model dispatches on:
+`services/fixture-gateway` (`fixture_gateway.app`, port 4010) answers OpenAI-format chat completions locally and deterministically (A-18) and implements the LiteLLM key subset the runner uses (`/key/generate`, `/key/delete`, `/key/info`, `/health/liveliness`), including a hard `max_budget` per key, so AC-29 and AC-30 exercise the same client calls as the real router. The run transport (9.5) wraps the HTTP client to whichever backend `LITELLM_URL` names. Its output depends only on the request hash from 9.5 (which includes the play key) and the occurrence number, through `u = int(sha256(request_hash + ":" + occurrence)[:12], 16) / 16**12`, so the same prompt at a different seed can still differ, as a sampled model would. Responses report `model: "fixture-<alias>-v1"`, token usage as characters / 4, and cost headers at $0.10 and $0.40 per million prompt and completion tokens. Our own judge, analyst and probe prompts start with a `TASK: <name>` line, which it dispatches on:
 
 | Request | Fixture behaviour |
 | --- | --- |
@@ -781,9 +908,11 @@ The demo run uses A-24's size: 100 bots (50 returning, 30 newcomer, 20 creator),
 
 ## 10. LLM router
 
-`infra/litellm/config.yaml` is Ch. 16's file with two changes: each deployment gets `model_info: {training_cutoff: null}` (a placeholder the operator fills, read by the backtest registry), and `bots-local` points at `http://bots-local:8000/v1` as a placeholder for a self-served model. All keys are `os.environ/...`, `master_key` and `database_url` come from the environment, `bots-fast` has two deployments with the `bots-fast` → `bots-backup` fallback, `drop_params: true`, and `redis_host: redis` (FR-11.1). Services call aliases at `LITELLM_URL` through the OpenAI SDK (FR-11.2).
+`infra/litellm/config.yaml` (built) defines `bots-fast`, `bots-backup`, `judge`, `analyst` and `bots-local`. One provider backs the first four (A-35): `model: os.environ/GEMINI_FLASH_LITE_MODEL` for `bots-fast` and `os.environ/GEMINI_FLASH_MODEL` for the rest, all with `api_key: os.environ/GEMINI_API_KEY`, `reasoning_effort: disable`, and explicit `input_cost_per_token` and `output_cost_per_token` in `model_info` so budgets bind. `bots-fast` falls back to `bots-backup`. `bots-local` points at a placeholder and is reported as unconfigured. `master_key` and `database_url` come from the environment, `drop_params: true`, and `store_prompts_in_spend_logs: true` is kept, because the router's spend log is the evidence for AC-64, AC-68 and AC-69. Revision 1's second `bots-fast` deployment is dropped (it needs a second provider key, A-35, AC-33). Services call aliases at `LITELLM_URL` through the OpenAI SDK (FR-11.2); the model map and pre-flight are in 3.17.
 
-`scripts/check_litellm_versions.py` (FR-11.3, AC-33) scans compose files, Dockerfiles, `requirements*.txt`, every `pyproject.toml`, `uv.lock` (parsed as TOML: any package named `litellm` with version 1.82.7 or 1.82.8) and `package-lock.json`, and matches `litellm[^\n]{0,40}?v?1\.82\.[78]\b` in the text formats. It also fails when the `llm-gateway` image line lacks a digest or its tag names a banned version. It exits 1 with each hit's file and line. `make check` runs it, and a test runs it against `tests/fixtures/litellm-bad/` (must fail) and the repository (must pass).
+`LITELLM_URL` defaults to `http://localhost:4010/v1` in settings (the fixture gateway) while the compose router listens on `127.0.0.1:4000` and `provision_key.py` addresses it directly. The design resolves this with an explicit `LLM_BACKEND` setting, `router` or `fixture` (fixture only when `DEMO_MODE=1`), and `LITELLM_URL` set to the port of the chosen backend (CC-15). Per-run virtual keys use alias `scrim-<run-id>`, models `bots-fast`, `bots-backup`, `judge` and `analyst` (themes use `analyst`, FR-10.6), the run's `max_budget`, and are deleted in the run's `finally` (9.5); the existing `LiteLLMAdmin` implements generate, delete, info and spend-log reads.
+
+`scripts/litellm_version_guard.py` (to add; the Makefile target `litellm-guard` calls it, CC-14) scans compose files, Dockerfiles, requirements, every `pyproject.toml`, `uv.lock` (parsed as TOML for a package named `litellm` at 1.82.7 or 1.82.8) and `package-lock.json`, and fails when the `llm-gateway` image is not pinned by digest or its comment or tag names a banned version. A test runs it against `tests/fixtures/litellm-bad/` (must fail) and the repository (must pass), and `tests/repo/test_router_config.py` checks the aliases, the one `bots-fast` deployment, the per-token costs and that every key is `os.environ/` (AC-33).
 
 ## 11. Front end
 
@@ -854,7 +983,7 @@ All pages are client-rendered behind sign-in with TanStack Query; the header sho
 | `/vod/calibration` | Gate status (drops counted of 8), the latest model per target with MAEs and `coverage_80`, or "No model has shipped" |
 | `/vod/backtests`, `/vod/backtests/[runId]`, `/vod/cases/[caseId]` | Scorecard per family; case list; Killcam page with the brief and a masked-view toggle, forecast range against outcome on a log axis, probe answers, clean, leaky and shock badges, and a link to replay the case's scrim. "Lock prospective forecast" on prospective cases |
 | `/partners/[partnerId]` | Placements and approved creative, the activation's scrim as `SimValue`s, and after publish the real results as `RealValue`s |
-| `/mirofish` | The MiroFish link, or "MiroFish not connected" with the labelled recorded answers |
+| `/mirofish` | Live status (state, pin, model alias, budget left), the deep link to the pre-built project in MiroFish's own UI, and a chat box that sends the analyst's question to the real MiroFish backend and shows the reply with its agent, time and router request ID. States: live, unreachable, or the banner "RECORDED BACKUP, NOT LIVE" (3.16) |
 | `/sign-in` | As in Odyssey web |
 
 ## 12. Seeds and media fixtures
@@ -895,9 +1024,9 @@ The different rates exercise drift correction. The output (about 3 MB) is commit
 
 Every ID derives from names, and the fixture model is deterministic, so a second run produces the same rows and the same recordings (AC-47). The recordings are always regenerated from committed inputs and never edited by hand (FR-10.12). A run made through a real provider is not reproducible this way, and exporting live recordings into the seed is follow-up work.
 
-### 12.4 MiroFish sandbox
+### 12.4 MiroFish sandbox content
 
-`infra/mirofish/setup.sh <dir>` clones `https://github.com/666ghj/MiroFish`, checks out `v0.1.2`, verifies the commit is `985f89f49acbb44ee14d9d680682c741a44eeebe` (exits non-zero otherwise), and writes a `docker-compose.override.yml` that pins `ghcr.io/666ghj/mirofish:v0.1.2@sha256:d236402e…` (the upstream file uses `:latest`) and joins the external `faze-shared` network. `infra/mirofish/.env.example` sets `LLM_BASE_URL=http://llm-gateway:4000/v1`, `LLM_MODEL_NAME=analyst` and `LLM_API_KEY=<from make mirofish-key>`, and documents that MiroFish v0.1.2 also requires `ZEP_API_KEY` for Zep Cloud memory. `make mirofish-key` creates a router key (alias `mirofish-sandbox`, models `["analyst"]`, `max_budget` from `MIROFISH_BUDGET_USD`) and prints it once. `make mirofish-pack` writes `var/mirofish-pack/` with the two brief variants and the public Lore facts, excluding demo-authored facts. Account data, council answers and analytics never enter the pack (FR-18.1). Zep Cloud is a third party, so the README states that it receives the pack's public text and nothing else. None of this runs during validation, because it needs Docker (Q-3).
+The MiroFish deployment, key handling, readiness check, chat and verification chain are specified in 3.16, and the token policy in 3.17. This section keeps only the content pack. `seeds/mirofish-pack/` holds the two brief variants (the same text the seed loads into Signal Lab's drafts) and the public Lore facts from the source document with their links, excluding the demo-authored hostile fact, and a `manifest.json` with each file's SHA-256 as the upload allowlist. `make mirofish-pack` regenerates it from the seed inputs. Account data, council answers, votes and first-party analytics never enter the pack (FR-18.5). Zep Cloud is a third party and receives only the pack's text.
 
 ## 13. Error handling
 
@@ -1087,93 +1216,131 @@ End-to-end runs use production builds: `make e2e` runs `next build` for both app
 
 ## 17. Commands
 
-After `make setup`, every Python command runs as `uv run --frozen --no-sync …` and every JavaScript command through the workspace's installed binaries, so no target re-resolves dependencies or needs the network.
+Every command in the docs is a `make` target. After `make setup`, Python commands run as `uv run --no-sync …`. Existing targets are in the Makefile at `309a146`; "to add" targets are the design's.
 
-| Target | Runs |
-| --- | --- |
-| `make setup` | `uv python install 3.11.15`, `uv sync --frozen --all-packages`, `npm ci` |
-| `make env` | Copies missing `infra/.env*` from templates with local random secrets |
-| `make db-up` | Prints or runs the Homebrew service commands chosen in Q-1 |
-| `make migrate`, `make migrate-roundtrip` | 4.2 |
-| `make seed` | 12.3 |
-| `make media-fixtures`, `make mirofish-pack`, `make mirofish-key` | 12.1, 12.4 |
-| `make dev`, `make health` | 3.5 |
-| `make format`, `make format-check` | `ruff format`, `prettier --write` / `--check` |
-| `make lint` | `ruff check`, `eslint .` |
-| `make typecheck` | `mypy` per Python package, `tsc --noEmit` per workspace, the type-test project |
-| `make api-client`, `make api-client-check` | 11.1 |
-| `make test` | Python unit and integration, Vitest, repository checks |
-| `make test-race`, `make test-replay` | Race module 10 times; scrim determinism tests |
-| `make e2e`, `make e2e-stage` | All Playwright specs; the stage spec three times |
-| `make compose-check`, `make litellm-check`, `make secrets-scan` | AC-1, AC-33, AC-57 |
-| `make verify-demo` | AC-26 pairing check on the seeded demo run |
-| `make check` | Everything above except the end-to-end targets |
-
-## 18. Build order
-
-Each milestone ends with its acceptance criteria passing. Work inside a milestone follows the order listed.
-
-| Milestone | Builds | Done when |
+| Target | Runs | State |
 | --- | --- | --- |
-| M1 Skeleton | Workspaces and locks, `.gitignore` additions, `faze_common`, all migrations with roles, grants and triggers, Odyssey public and internal apps with health and status, Signal Lab API skeleton, dev-auth, edge server, both web apps with sign-in, compose file, env templates, Procfile, Makefile, compose and LiteLLM checks | AC-1 to AC-7 |
-| M2 Fan loop | Media fixtures, seed loader (campaigns, entries, accounts), Odyssey domain (transitions, lock, vote, close, publish, stream, anomalies, council), Studio campaign and ballot pages with Advance, Drop, Call It and Final Cut pages, `SyncedReplay` | AC-8 to AC-24, AC-48, AC-53 |
-| M3 Router and Scrims | Router config, scrim-runner (config, personas, network, policy, OASIS adapter, transport, fixture model, judge, analyst, metrics, forecasts), scrim worker, Scrims API and pages, demo recording in the seed, replay timing measurement and the 9.9 rule | AC-25 to AC-35 |
-| M4 Learn loop | Relay, outcome sets, week-2, refit, finalist poll and commitments, Sim vs Fans on the Final Cut, VOD pages, Lore search, masking, probes, backtest job, scorecard, shadow lock, Partners | AC-36 to AC-46, AC-52 |
-| M5 Stage-ready | MiroFish panel and sandbox files, full seed with timing, label counts, stage spec, verify scripts, README, report | AC-47, AC-49, AC-50, AC-54 to AC-60; AC-51 manually |
+| `env`, `setup`, `setup-python`, `setup-node`, `fix-pth` | `scripts/gen_env.py`, `uv sync --python 3.11 --all-packages`, `npm install` | exists |
+| `db-install`, `db-up`, `db-down`, `db-reset` | `scripts/local_db.sh` (PostgreSQL 16, pgvector, Redis, roles, `faze` and `faze_test`) | exists |
+| `migrate` | `python infra/migrations/run.py upgrade` | exists; add `migrate-roundtrip` |
+| `seed` | `python seeds/seed.py` | target exists, script to write |
+| `test`, `test-unit`, `test-integration` | pytest over `tests/`; no provider calls | exists; add `test-race`, `test-replay` |
+| `lint`, `fmt`, `typecheck` | ruff, mypy, ESLint, Prettier, `tsc` | exists |
+| `secret-scan`, `litellm-guard` | `scripts/secret_scan.py`, `scripts/litellm_version_guard.py` | targets exist, scripts missing (CC-14) |
+| `check` | lint, typecheck, secret-scan, litellm-guard, test | exists |
+| `compose-check`, `compose-up`, `compose-down` | `docker compose -f infra/docker-compose.yml …` | exists |
+| `live-check-gemini` | model pre-flight, `CONFIRM_LIVE=1` | exists; script changes in CC-5 |
+| `live-check-zep` | read-only Zep check, no tokens | exists |
+| `colima-up`, `dev`, `health`, `api-client`, `api-client-check` | 3.5, 3.7, 11.1 | to add |
+| `mirofish-fetch`, `mirofish-up`, `mirofish-key`, `mirofish-revoke`, `mirofish-pack`, `mirofish-ready` | 3.16 | to add; `mirofish-ready` makes no LLM request |
+| `mirofish-build`, `verify-chain`, `live-scrim-smoke`, `live-budget-bind` | 3.16, 3.17, `CONFIRM_LIVE=1` | to add |
+| `e2e`, `e2e-stage`, `e2e-stage-live` | Playwright; `e2e-stage` repeats the stage run 3 times with `STAGE_CHAT=0`; `e2e-stage-live` sends the live chat message (`CONFIRM_LIVE=1`) | to add |
+| `media-fixtures`, `verify-demo` | 12.1; pairing check on the seeded demo run | to add |
 
-The two riskiest pieces, synchronized replay and the vote/close protocol (App. A), land first within M2, and the OASIS adapter's timing measurement lands first within M3, so a miss shows up while there is time to apply the fallback.
+## 18. Build order and status
 
-## 19. Open questions carried from requirements
+Existing work is not redone. The milestones follow `03-plan.md`; each ends with its acceptance criteria passing.
 
-| ID | Status in this design |
+| Milestone | Plan steps | Status at `309a146` | Remaining |
+| --- | --- | --- | --- |
+| M1 Skeleton | P0 to P3, P10 | P0 to P3 done (workspace, PostgreSQL 16, Redis, four migrations, `faze_common`, dev-auth). Compose has postgres, redis, llm-gateway | Application services in compose, web apps' sign-in, `migrate` service, CC-2, CC-3, CC-14, AC-1 and AC-2 on both paths |
+| M2 Fan loop | P4, P8, P9 | P4 done (vote, close, publish, idempotency, rate limits, guards, SSE, council; 150 tests) | CC-1, CC-6, CC-8 to CC-13, seeds and media, web apps and `SyncedReplay`, Studio pages |
+| M3 Router and Scrims | P6, P7 | Not started. Router config exists, model IDs blank | Q-9 pre-flight, fixture gateway, scrim runner, Signal Lab API, Scrims pages |
+| M4 Learn loop | P5, P7 | Not started | Relay and outcome workers, VOD, backtests, Partners, Lore search, CC-7 |
+| M5 Stage-ready | P11, P12, P13 | Not started. MiroFish image built; Zep auth verified (chain step 1) | MiroFish fetch, key, build, chain verify, panel, stage test, report |
+
+Within a milestone the riskiest piece goes first: the OASIS adapter's timing measurement opens M3, and the MiroFish key, build and chat check opens M5, because each depends on an outside service that can block (Q-9, Zep, quota).
+
+## 19. Open questions and decisions
+
+| ID | Status |
 | --- | --- |
-| Q-1 Local PostgreSQL and Redis | Still needs the user's approval before validation. The design works with option (a), Homebrew `postgresql@16` with pgvector built from source, and also with (b), PostgreSQL 17, because it uses no feature that differs between them; the report states which ran. Compose keeps PostgreSQL 16 either way. Installing the Homebrew `docker-compose` formula enables the primary AC-1 check. |
-| Q-2 Playwright browser | Decided: the installed Google Chrome through `channel: "chrome"`; no browser download. |
-| Q-3 MiroFish | Decided: link plus labelled recorded answers (12.4, 7.4). |
-| Q-4 Credentials | None assumed. Live paths stay unverified unless the user supplies credentials in the gitignored env files. |
+| Q-1 to Q-8 | Closed by D-1 to D-8 in requirements revision 3 |
+| Q-9 Gemini models | Approved by the user: pre-flight `gemini-3.8-flash` then `gemini-3.5-flash-lite`, one 8-token request each, 120 s timeout, no retries. The first attempt at `gemini-3.8-flash` timed out at 30 s. The implementation step runs the pre-flight and records the result (3.17). Until it passes, no live step that needs a model runs |
+| Key quota | Unknown. Ceilings stay small and live work stops at the first quota error (AC-67) |
+| Key hygiene | Both keys were pasted into chat. Rotate after the hackathon |
+| Whether MiroFish keeps its simulation environment alive for interviews | To confirm against the pinned checkout in P11 (3.16) |
+| Recovery of the other session's design | Not available (Kiro history never captured it). `.agents/backups/2026-11-15_design-overwrite/02-design.impl-session.md` is optional |
 
-## 20. Deviations from the source
+## 20. Deviations and required code changes
+
+### 20.1 Deviations from the source
 
 | Source | This design | Reason |
 | --- | --- | --- |
-| Ch. 10 tree | Adds `services/common`, `services/dev-auth`, `packages/web-auth`, `packages/edge-server`, `scripts/`, `e2e/`, `var/` | Shared verification (FR-2.1), fixture sign-in (FR-2.3), same-origin proxying for phones (FR-8.4) |
-| Ch. 20 compose | Adds `odyssey-internal`, `scrim-worker`, `migrate`, `dev-auth` and two networks | Internal listener isolation (FR-2.6), OASIS process state, `up` runs migrations |
-| Ch. 20 env files | Per-role DSNs in `.env.odyssey`, `.env.lab`, `.env.relay`, `.env.db`; `.env.web` for the web apps | Least privilege per process; `DATABASE_URL` would hand every role's password to every service |
-| Ch. 13 ballot states | Adds `locked` | A ballot exists from finalist lock until voting opens (FR-3.2, FR-3.6) |
-| A-4 transition table | Adds `paused`→`closed` through close only | FR-4.3 allows closing a paused ballot and FR-3.4 forbids disagreement |
-| Ch. 12 route tables | Adds the internal and public routes marked (+) in 6.1, and `PATCH /v1/vod/cases/{id}` | Needed by Studio, Council, click tracking, mode reporting and AC-42 |
-| Ch. 13 `guardian_email` | Stored as an HMAC | Data minimization; the plaintext is not needed after consent |
-| Ch. 6, Ch. 14 #12 Sim vs Fans | Hash committed before close; full prediction sent at publish and verified | Proves the prediction predates the result while keeping simulated values out of `odyssey` until publish (FR-9.3, FR-12.4, AC-55) |
-| Ch. 14 steps 2–3 | The worker, not the API, creates the run's LiteLLM key; job payload holds only the run ID | No live key in Redis or logs, and creation and deletion share one `try/finally` |
-| Ch. 16 key models | Adds `analyst` | FR-10.6 uses it for themes |
-| Ch. 15 `play()` | Custom `Platform` with the `random` recommender, `SequentialEnv`, `FastChannel`, injected generators, `ApproxTokenCounter` | Replay determinism and no run-time downloads (9.4) |
-| Ch. 15 judge | One grading call per play covering all answers | Same grades, fewer calls; replay stays exact |
-| Ch. 18 case scrims | 20 bots, 3 rounds, 2 seeds, one variant | They demonstrate the machinery; the full size would add minutes to the seed |
-| Ch. 11 rendering | Lobby, Drop and Final Cut render per request | No CDN in scope, and per-request rendering cannot serve a stale pre-publish page |
-| Ch. 17 Final Cut | Credits are a 5 s HTML card in the sequence | No credits video exists; stitching is out of scope |
-| App. A #7 vote log | No separate append-only vote table | Outbox rows and `wh.events` already form the append-only log; tallies read only `votes` |
-| FR-2.7 account creation time | Odyssey's first-seen time (seeded for demo accounts) | Supabase's `created_at` needs the service-role key, which no service should hold for this |
-| Ch. 16 router | Not run natively, and no `litellm` Python package anywhere | Smaller supply-chain surface; the live path is the pinned image in compose |
+| Ch. 10 tree | Adds `services/common`, `services/dev-auth`, `services/fixture-gateway`, `packages/web-auth`, `packages/edge-server`, `scripts/`, `tests/`, `e2e/`, `config/`, `infra/mirofish`, `.local/` | Shared verification, fixture sign-in and gateway, same-origin proxy, live-integration tooling |
+| Ch. 20 compose | Adds `migrate`, `odyssey-internal`, `scrim-worker`, `dev-auth`, `fixture-gateway`, a MiroFish-only network, no host ports for PostgreSQL and Redis, Colima limits | FR-1.2, FR-2.6, FR-18.2, D-7 |
+| Ch. 20 env files | Per-role files instead of one `DATABASE_URL`; `.env.mirofish` and a rendered MiroFish env | Least privilege; the code builds role URLs from per-role passwords |
+| Ch. 16 router | One Gemini provider, one `bots-fast` deployment, per-token costs, models verified before configuring, reasoning disabled | A-35, FR-11.5, NFR-10 |
+| Ch. 16 pin | LiteLLM v1.83.14-stable by digest | Already pinned in compose and not a banned version |
+| Ch. 8 step 3 | Live MiroFish in Docker with a budgeted key and Zep, no link or recorded answers | D-3 |
+| Ch. 20 `mirofish` image | Built from the pinned commit, not pulled | Upstream compose uses `:latest` |
+| Ch. 13 ballot | Ballot starts `open` at lock; no `locked` state | The code and trigger enforce voting through the campaign state |
+| Ch. 6 and 14 Sim vs Fans | Hash committed before close, full prediction at publish | AC-55 and FR-9.3 |
+| Ch. 13 outcome set | Week-2 return in its own append-only table | FR-13.3 immutability |
+| Ch. 14 steps 2 and 3 | Workers create and delete run keys inside the run's `finally` | No live key in Redis or job arguments |
+| Ch. 15 `play()` | Custom platform, sequential environment, fast channel, injected generators, approximate token counter | Deterministic replay and no downloads |
+| Ch. 18 case scrims | 20 bots, 3 rounds, 2 seeds, one variant | They show the machinery; the full size would lengthen the seed |
+| Ch. 11 rendering | Lobby, Drop and Final Cut render per request | No CDN in scope |
+| Ch. 17 Final Cut | Credits are a 5 s HTML card in the sequence | No credits video exists |
+| App. A #7 | No separate vote event log | The outbox and `wh.events` are the append-only log |
+| FR-2.7 account age | Odyssey's first-seen time | Supabase's `created_at` needs a service-role key |
+
+### 20.2 Code changes required by revision 3 and this design
+
+Nothing here was changed in this step. Each item is for the implementation step, and none weakens a requirement.
+
+| ID | Change | Why |
+| --- | --- | --- |
+| CC-1 | Replace `odyssey.sim_predictions.predicted` with a commitment (`sha256`, `registered_at`, `registered_by`); `POST /internal/v1/ballots/{id}/prediction` takes the hash; publish takes the full prediction in its body and checks hash and timing | AC-55, FR-9.3, A-12 |
+| CC-2 | Split env files so each process receives only its role's database password and secrets (3.3) | NFR-1, FR-1.3, AC-1 |
+| CC-3 | Create the `vector` extension in `infra/postgres/init` for compose; add the `migrate` service | AC-2, FR-1.2 |
+| CC-4 | Add `colima-up`, `dev`, `health`, `migrate-roundtrip` targets and a process runner that gives each process only its env files | 3.5, 3.7, AC-2 |
+| CC-5 | `check_gemini.py`: 120 s timeout, one attempt, failure categories and thinking tokens in the ledger, continue after a timeout; `secretsafe.ledger_append` gets status and thinking fields; add the ledger gate and `CONFIRM_LIVE` check to every live target | 3.17, AC-67, AC-70 |
+| CC-6 | Tighten grants (`odyssey_app` no delete except idempotency, insert-only outbox; `lab_app` read-only `lore`) and add append-only guards on `episodes`, `credits`, `audit_log` | NFR-1, FR-3.1, AC-4 |
+| CC-7 | Add `wh.week2_returns` and restrict `workers_rw` accordingly | FR-13.3, AC-37 |
+| CC-8 | Add the 2 s database reconcile to the event stream | 5 s publish-to-page target |
+| CC-9 | Encrypt the guardian token payload (Fernet) instead of only signing it, keep the 72 h expiry and single-use consumption, store a keyed hash of the guardian email | NFR-1, FR-17.1 |
+| CC-10 | Add missing columns and tables: `campaigns.season/week/announced`, `ballot_finalists.locked_playback_id`, `lore.facts.known_from/era/provenance/demo_authored`, `odyssey.audit_log` | 4.3, 4.5 |
+| CC-11 | Add `expires_at` to `idempotency_keys` and a purge | FR-4.2 retention |
+| CC-12 | Add the missing `lab` columns and tables in 4.4 as `lab_0002` | Scrims, polls, predictions |
+| CC-13 | Read the role from `app_metadata.role` before the top-level `role` (Supabase sets `role: authenticated`), and read analytics consent from `odyssey.accounts`, not a token claim | FR-2.1, FR-2.2 |
+| CC-14 | Write `scripts/secret_scan.py` and `scripts/litellm_version_guard.py` (the Makefile already calls them) | AC-33, AC-57, AC-71 |
+| CC-15 | Add `LLM_BACKEND` and make `LITELLM_URL` follow it (4000 for the router, 4010 for the gateway); align `provision_key.py` and settings | 10 |
+| CC-16 | Update the problem catalogue and `docs/problems.md` to the code's idempotency slugs and add `mirofish-unreachable`, `mirofish-chat-failed` | 13.1 |
 
 ## 21. Risks
 
-| Risk | Likelihood and impact | Mitigation |
+| Risk | Impact | Mitigation |
 | --- | --- | --- |
-| The OASIS adapter relies on 0.2.6 internals (module-level `random`, `Channel`, `step`) | Medium if versions move; replay breaks | Exact pins; tests that fail when a patched attribute disappears; adapter isolated in one module |
-| `camel-ai` 0.2.90 with `openai` 2.x behaves differently from what was read | Low to medium; record or replay fails | Replay-twice determinism test and recorded-request assertions run in M3 before any UI work depends on them |
-| Demo replay slower than 120 s | Medium | Measured first in M3; documented fallback to 6 seeds |
-| A live recording of the full demo size runs one provider call at a time, about an hour at 1 s per call | High when recording live; no stage impact | Recordings are made ahead of time; per-play request hashes (9.5) allow parallel recording across processes as follow-up work |
-| Heavy Python dependencies (torch, transformers) slow `make setup` and enlarge the worker image | High likelihood, low impact | CPU-only torch on Linux; dependencies installed once from the lock |
-| Next.js behaviour behind a custom Node server, especially streaming | Low | Edge server proxies `/api` itself, bypassing Next.js for API traffic; covered by the stage test |
-| iOS Safari playing two inline videos | Medium; affects the phone check | Muted, `playsInline`, start on tap; manual AC-51 check recorded |
-| Fixture-model output read as real model behaviour | Medium reputational | `fixture` flag on every value, "Fixture model" marker, README and report statements |
-| Votes refused while Redis is down | Low likelihood, demo-visible | A-9 trade-off; `make health` checks Redis before the stage run |
-| Shared HS256 service secret leaks | Low; attacker could mint internal tokens | Internal listener unreachable from browsers and the edge network; 5-minute tokens; actor recorded on every change |
-| Live integrations (Supabase, Mux, providers, MiroFish) unverified | Certain without credentials | Reported as unverified with reasons; each adapter has a contract test |
-| pgvector for PostgreSQL 16 needs a source build on Homebrew | Medium setup friction | Q-1 option (b) as fallback |
-| Load target (500 votes/s) untested | Certain | Recorded as k6 follow-up (NFR-5) |
+| `gemini-3.8-flash` times out or is unavailable for this key | Analyst, judge, backup and MiroFish roles have no model; live steps are "not verified" | Pre-flight first (3.17); stop and ask rather than test other models; fixture gateway keeps the rest of the demo working |
+| Token quota exhausted | Live checks stop | Small ceilings, ledger gate, honest "not verified: quota" |
+| Zep Cloud quota or key rejected | MiroFish memory fails | `check_zep.py` first; report unverified, never substitute |
+| MiroFish's interview needs a live simulation environment that may not persist | Chat unavailable after a restart | Confirm in P11; readiness check reports it; rebuild is one budgeted command |
+| MiroFish v0.1.2 reasoning-token behaviour with Gemini 3 | Cost above ceilings | Reasoning setting taken from measured usage; ceilings re-set after the first run |
+| 8 GiB Docker limit with MiroFish, router and workers | Out of memory | 3.7 plan: scrim worker and MiroFish build never run together |
+| Application images with torch fill the 30 GiB disk | Build fails | Report image sizes; build only what a step needs |
+| OASIS adapter relies on 0.2.6 internals | Replay breaks on upgrade | Exact pins; tests fail when a patched attribute disappears |
+| `camel-ai` 0.2.90 with `openai` 2.x differs from what was read | Record or replay fails | Determinism test in M3 before UI work |
+| Demo replay slower than 120 s | NFR-5 miss | Measure first in M3; documented fallback to 6 seeds |
+| Env-file split (CC-2) touches every service | Regression | Settings tests per process; compose policy test |
+| Fixture-model output read as real model behaviour | Misleading demo | `fixture` flag on every value and the "Fixture model" marker |
+| Live Supabase and Mux unverified | Reported unverified | Contract tests per adapter; no credentials supplied |
+| Keys pasted into chat | Exposure | Rotate after the hackathon |
+| Two sessions edited the same files | Lost work (it happened once) | The pipeline is sole owner; guarded writes; checkpoint commits |
 
 ## 22. Responses to design review
 
-No design review existed in the run directory when this revision was written, so there are no findings to address. A later revision will answer each finding here as addressed, backlogged with a reason, or declined with a justification.
+No design review file existed in the run directory when this revision was written, so there are no findings to answer. The reconciliation itself, for the record:
 
+| Item | Handling |
+| --- | --- |
+| Requirements revision 3 | Applied as the source of truth in 0, 1, 3, 4, 10, 12.4, 17 to 21 |
+| Live MiroFish, no recorded substitute | 3.16; recorded-interview fallback removed; emergency backup only by explicit switch |
+| Gemini-only router, availability checks, ledger, ceilings | 3.17 and 10; pre-flight specified, not run here |
+| Colima limits, private networking, no host ports for PostgreSQL and Redis, MiroFish network | 3.1, 3.4, 3.7, 3.8 |
+| Compatibility with P0 to P4 | 2, 3, 4 and 20.2 follow the code; conflicts listed as CC-1 to CC-16 |
+| Design 3.16 and 3.17 | Rebuilt from `compose.yml`, `live-budgets.json`, `03-plan.md`, `PROGRESS.md`, the code and revision 3, because Kiro history never captured the original |
+| `02-design.impl-session.md` | Not present. If it appears, unique compatible decisions are merged and listed here |
+| Revision-1 material kept | Concurrency, idempotency, database guards, record/replay, budgets, invariants, errors, validation and tests (5 to 9, 13 to 16), under the conformance note before section 5 |
+| Sections 5 to 9 and 11 to 16 not rewritten line by line | By instruction ("leave the matching revision 2, just move on"). The conformance note and 20.2 say which parts the code or revision 3 override |

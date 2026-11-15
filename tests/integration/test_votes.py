@@ -134,7 +134,7 @@ async def test_vote_close_race(public, internal, engine, token, service_token, r
     voters = [str(uuid.uuid4()) for _ in range(200)]
     finished = 0
     fire = asyncio.Event()
-    threshold = 10 + 18 * run  # the close fires after this many votes have returned, with the rest in flight
+    threshold = 1 + 4 * run  # the close fires after this many votes have returned, with the rest in flight
 
     async def cast(index: int):
         nonlocal finished

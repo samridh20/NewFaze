@@ -42,6 +42,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+pythonpath = [".", "services/common", "services/dev-auth", "services/odyssey-api", "services/signal-lab-api", "services/workers", "services/scrim-runner", "services/fixture-gateway"]
 markers = [
   "live: spends real provider tokens; needs CONFIRM_LIVE=1",
   "slow: takes more than a few seconds",

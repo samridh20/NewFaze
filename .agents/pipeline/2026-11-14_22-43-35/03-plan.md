@@ -22,3 +22,17 @@ Order follows risk (App. A: synced replay and vote integrity first) and keeps th
 Blocked until the user answers Q-9: the router config's model IDs, P11 steps 2 to 7, the live router smoke scrim and budget check (AC-68, AC-69), and step 8 of P12. Nothing in P0 to P9 depends on it.
 
 Live token rules during execution: default targets make no provider calls. Live targets print their ceiling and need `CONFIRM_LIVE=1`. Every live call is logged in `.local/token-ledger.jsonl`. The first quota error stops live work (AC-67).
+
+## Reconciled checklist (resume, current repo at 309a146 + baseline fix; 150 tests green)
+Done: P0 scaffold, P1 PG16/Redis, P2 migrations 0001 (odyssey/lab/lore/wh), P3 common+dev-auth, P4 Odyssey API, MiroFish image built, Zep step 1 live, infra/litellm config.
+Not done (code dirs exist but empty): workers, scrim-runner, signal-lab-api, seeds, web, compose services, chain verifier.
+Critical path (each ends with its check; P0 only):
+1. Makefile/guards: `scripts/secret_scan.py`, `scripts/litellm_version_guard.py` (CC-14). Check: `make secret-scan litellm-guard`.
+2. SQL `odyssey_0002` (CC-1 commitment, CC-6 grants/append-only, CC-10, CC-11), `lab_0002` (CC-12), `wh_0002` (CC-7); `ballots.py/internal.py/public.py`. Depends on 1. Check: `uv run --no-sync pytest tests -q` + `make migrate`; sim_predictions has no plaintext.
+3. CC-2 per-service env split: `services/common/faze_common/settings.py`, `scripts/gen_env.py`, `infra/.env.*.example`. Check: settings test per process.
+4. CC-13 auth mapping `common/auth.py`, `dev-auth`. Check: test_states_and_auth.
+5. CC-5/CC-15 `scripts/check_gemini.py` (preflight once: gemini-3.8-flash, gemini-3.5-flash-lite). Check: `CONFIRM_LIVE=1 make live-check-gemini`.
+6. Workers (relay, freeze, janitor), scrim-runner, Signal Lab API, seeds. Depends on 2,3. Check: tests + `make seed` twice.
+7. MiroFish live chain (render_env, provision_key, verify_mirofish_chain.py). Depends on 5. Check: chain steps 1-7.
+8. Minimum web routes + Playwright happy path. Depends on 6. Check: `npx playwright test`.
+Deferred: P1/P2 items, CC-8 reconcile, CC-9 Fernet, CC-16 catalogue, DLC/polish/optional screens, 30 GiB image checks.
