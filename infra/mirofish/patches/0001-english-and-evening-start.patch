@@ -1,0 +1,174 @@
+diff --git a/backend/app/api/simulation.py b/backend/app/api/simulation.py
+index 3a0f681..2f586fa 100644
+--- a/backend/app/api/simulation.py
++++ b/backend/app/api/simulation.py
+@@ -21,7 +21,7 @@ logger = get_logger('mirofish.api.simulation')
+ 
+ # Interview prompt 优化前缀
+ # 添加此前缀可以避免Agent调用工具，直接用文本回复
+-INTERVIEW_PROMPT_PREFIX = "结合你的人设、所有的过往记忆与行动，不调用任何工具直接用文本回复我："
++INTERVIEW_PROMPT_PREFIX = "Staying in character, using your persona and all past memories and actions, reply in English with plain text and do not call any tools: "
+ 
+ 
+ def optimize_interview_prompt(prompt: str) -> str:
+diff --git a/backend/app/services/oasis_profile_generator.py b/backend/app/services/oasis_profile_generator.py
+index 57836c5..08e4a11 100644
+--- a/backend/app/services/oasis_profile_generator.py
++++ b/backend/app/services/oasis_profile_generator.py
+@@ -670,7 +670,7 @@ class OasisProfileGenerator:
+     
+     def _get_system_prompt(self, is_individual: bool) -> str:
+         """获取系统提示词"""
+-        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。使用中文。"
++        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。Write every string value in English."
+         return base_prompt
+     
+     def _build_individual_persona_prompt(
+@@ -710,14 +710,14 @@ class OasisProfileGenerator:
+ 3. age: 年龄数字（必须是整数）
+ 4. gender: 性别，必须是英文: "male" 或 "female"
+ 5. mbti: MBTI类型（如INTJ、ENFP等）
+-6. country: 国家（使用中文，如"中国"）
++6. country: country name in English, e.g. "United States"
+ 7. profession: 职业
+ 8. interested_topics: 感兴趣话题数组
+ 
+ 重要:
+ - 所有字段值必须是字符串或数字，不要使用换行符
+ - persona必须是一段连贯的文字描述
+-- 使用中文（除了gender字段必须用英文male/female）
++- Write everything in English (gender must be male/female)
+ - 内容要与实体信息保持一致
+ - age必须是有效的整数，gender必须是"male"或"female"
+ """
+@@ -759,14 +759,14 @@ class OasisProfileGenerator:
+ 3. age: 固定填30（机构账号的虚拟年龄）
+ 4. gender: 固定填"other"（机构账号使用other表示非个人）
+ 5. mbti: MBTI类型，用于描述账号风格，如ISTJ代表严谨保守
+-6. country: 国家（使用中文，如"中国"）
++6. country: country name in English, e.g. "United States"
+ 7. profession: 机构职能描述
+ 8. interested_topics: 关注领域数组
+ 
+ 重要:
+ - 所有字段值必须是字符串或数字，不允许null值
+ - persona必须是一段连贯的文字描述，不要使用换行符
+-- 使用中文（除了gender字段必须用英文"other"）
++- Write everything in English (gender must be "other")
+ - age必须是整数30，gender必须是字符串"other"
+ - 机构账号发言要符合其身份定位"""
+     
+@@ -813,7 +813,7 @@ class OasisProfileGenerator:
+                 "age": 30,  # 机构虚拟年龄
+                 "gender": "other",  # 机构使用other
+                 "mbti": "ISTJ",  # 机构风格：严谨保守
+-                "country": "中国",
++                "country": "United States",
+                 "profession": "Media",
+                 "interested_topics": ["General News", "Current Events", "Public Affairs"],
+             }
+@@ -825,7 +825,7 @@ class OasisProfileGenerator:
+                 "age": 30,  # 机构虚拟年龄
+                 "gender": "other",  # 机构使用other
+                 "mbti": "ISTJ",  # 机构风格：严谨保守
+-                "country": "中国",
++                "country": "United States",
+                 "profession": entity_type,
+                 "interested_topics": ["Public Policy", "Community", "Official Announcements"],
+             }
+@@ -1171,7 +1171,7 @@ class OasisProfileGenerator:
+                 "age": profile.age if profile.age else 30,
+                 "gender": self._normalize_gender(profile.gender),
+                 "mbti": profile.mbti if profile.mbti else "ISTJ",
+-                "country": profile.country if profile.country else "中国",
++                "country": profile.country if profile.country else "United States",
+             }
+             
+             # 可选字段
+diff --git a/backend/app/services/ontology_generator.py b/backend/app/services/ontology_generator.py
+index 2d3e39b..26f5b5a 100644
+--- a/backend/app/services/ontology_generator.py
++++ b/backend/app/services/ontology_generator.py
+@@ -66,7 +66,7 @@ ONTOLOGY_SYSTEM_PROMPT = """你是一个专业的知识图谱本体设计专家
+             "attributes": []
+         }
+     ],
+-    "analysis_summary": "对文本内容的简要分析说明（中文）"
++    "analysis_summary": "对文本内容的brief analysis summary (in English)"
+ }
+ ```
+ 
+diff --git a/backend/app/services/report_agent.py b/backend/app/services/report_agent.py
+index 02ca5bd..e2dc74f 100644
+--- a/backend/app/services/report_agent.py
++++ b/backend/app/services/report_agent.py
+@@ -653,7 +653,7 @@ SECTION_SYSTEM_PROMPT_TEMPLATE = """\
+ 
+ 3. 【语言一致性 - 引用内容必须翻译为报告语言】
+    - 工具返回的内容可能包含英文或中英文混杂的表述
+-   - 如果模拟需求和材料原文是中文的，报告必须全部使用中文撰写
++   - The report must be written entirely in English
+    - 当你引用工具返回的英文或中英混杂内容时，必须将其翻译为流畅的中文后再写入报告
+    - 翻译时保持原意不变，确保表述自然通顺
+    - 这一规则同时适用于正文和引用块（> 格式）中的内容
+diff --git a/backend/app/services/simulation_config_generator.py b/backend/app/services/simulation_config_generator.py
+index cc36250..57f8bb3 100644
+--- a/backend/app/services/simulation_config_generator.py
++++ b/backend/app/services/simulation_config_generator.py
+@@ -547,7 +547,7 @@ class SimulationConfigGenerator:
+ 请生成时间配置JSON。
+ 
+ ### 基本原则（仅供参考，需根据具体事件和参与群体灵活调整）：
+-- 用户群体为中国人，需符合北京时间作息习惯
++- The audience is English-speaking esports fans (US evening peak hours)
+ - 凌晨0-5点几乎无人活动（活跃度系数0.05）
+ - 早上6-8点逐渐活跃（活跃度系数0.4）
+ - 工作时间9-18点中等活跃（活跃度系数0.7）
+diff --git a/backend/scripts/run_parallel_simulation.py b/backend/scripts/run_parallel_simulation.py
+index 2a627ff..7afb50e 100644
+--- a/backend/scripts/run_parallel_simulation.py
++++ b/backend/scripts/run_parallel_simulation.py
+@@ -1233,7 +1233,7 @@ async def run_twitter_simulation(
+             break
+         
+         simulated_minutes = round_num * minutes_per_round
+-        simulated_hour = (simulated_minutes // 60) % 24
++        simulated_hour = (18 + simulated_minutes // 60) % 24  # FaZe patch: start at the 18:00 evening peak
+         simulated_day = simulated_minutes // (60 * 24) + 1
+         
+         active_agents = get_active_agents_for_round(
+@@ -1432,7 +1432,7 @@ async def run_reddit_simulation(
+             break
+         
+         simulated_minutes = round_num * minutes_per_round
+-        simulated_hour = (simulated_minutes // 60) % 24
++        simulated_hour = (18 + simulated_minutes // 60) % 24  # FaZe patch: start at the 18:00 evening peak
+         simulated_day = simulated_minutes // (60 * 24) + 1
+         
+         active_agents = get_active_agents_for_round(
+diff --git a/backend/scripts/run_reddit_simulation.py b/backend/scripts/run_reddit_simulation.py
+index 14907cb..484fd50 100644
+--- a/backend/scripts/run_reddit_simulation.py
++++ b/backend/scripts/run_reddit_simulation.py
+@@ -625,7 +625,7 @@ class RedditSimulationRunner:
+         
+         for round_num in range(total_rounds):
+             simulated_minutes = round_num * minutes_per_round
+-            simulated_hour = (simulated_minutes // 60) % 24
++            simulated_hour = (18 + simulated_minutes // 60) % 24  # FaZe patch: start at the 18:00 evening peak
+             simulated_day = simulated_minutes // (60 * 24) + 1
+             
+             active_agents = self._get_active_agents_for_round(
+diff --git a/backend/scripts/run_twitter_simulation.py b/backend/scripts/run_twitter_simulation.py
+index caab9e9..426df55 100644
+--- a/backend/scripts/run_twitter_simulation.py
++++ b/backend/scripts/run_twitter_simulation.py
+@@ -633,7 +633,7 @@ class TwitterSimulationRunner:
+         for round_num in range(total_rounds):
+             # 计算当前模拟时间
+             simulated_minutes = round_num * minutes_per_round
+-            simulated_hour = (simulated_minutes // 60) % 24
++            simulated_hour = (18 + simulated_minutes // 60) % 24  # FaZe patch: start at the 18:00 evening peak
+             simulated_day = simulated_minutes // (60 * 24) + 1
+             
+             # 获取本轮激活的Agent

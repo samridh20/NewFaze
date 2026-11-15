@@ -9,7 +9,7 @@ name: faze-mirofish
 
 services:
   mirofish:
-    image: faze/mirofish:v0.1.2-985f89f
+    image: faze/mirofish:v0.1.2-985f89f-en   # pinned commit + infra/mirofish/patches/0001 (English prompts, evening start)
     env_file: .env.runtime            # rendered by render_env.py, mode 600, gitignored
     ports:
       - "127.0.0.1:3000:3000"         # frontend

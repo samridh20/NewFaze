@@ -23,6 +23,14 @@ async def main() -> int:
     if not s.DEMO_MODE or s.is_production:
         print("seed refused: DEMO_MODE=1 and a non-production APP_ENV are required")
         return 2
+    eng0 = create_async_engine(s.database_url("faze_owner"))
+    keep = None  # the live MiroFish simulation survives a demo reset
+    try:
+        async with eng0.connect() as c:
+            keep = (await c.execute(text("select pin, project_id, graph_id, simulation_id, agent_id from lab.mirofish_project"))).first()
+    except Exception:  # noqa: BLE001 - first run, schema not there yet
+        keep = None
+    await eng0.dispose()
     py = [sys.executable, str(ROOT / "infra" / "migrations" / "run.py")]
     subprocess.run([*py, "downgrade"], check=True, capture_output=True)
     subprocess.run([*py, "upgrade"], check=True, capture_output=True)
@@ -61,7 +69,11 @@ async def main() -> int:
             await c.execute(text("insert into lab.activations (partner_id, campaign_slug, name, placement) values "
                                  "(:p,'homecoming-week1',:n,'end card')"), {"p": partner_id(key), "n": f"{name} end-card"})
         evidence = ROOT / ".local" / "evidence" / "mirofish-chain.json"
-        if evidence.exists():  # ids of the live MiroFish chain run, so Signal Lab can chat with the real simulation
+        if keep is not None:
+            await c.execute(text("insert into lab.mirofish_project (pin, project_id, graph_id, simulation_id, agent_id) "
+                                 "values (:a,:b,:c,:d,:e)"), {"a": keep.pin, "b": keep.project_id, "c": keep.graph_id,
+                                                             "d": keep.simulation_id, "e": keep.agent_id})
+        elif evidence.exists():  # ids of the live MiroFish chain run, so Signal Lab can chat with the real simulation
             import json
             by = {r["name"]: r["evidence"] for r in json.loads(evidence.read_text())}
             if by.get("agent-chat") and by.get("simulation-prepared"):

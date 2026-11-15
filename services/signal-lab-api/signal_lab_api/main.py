@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(title="Signal Lab API", version="0.1.0", lifespan=lifespan)
 install_error_handling(app)
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3002", "http://127.0.0.1:3002"],
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3002", "http://127.0.0.1:3002", "http://localhost:3001"],
                    allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
 
 
@@ -170,39 +170,6 @@ async def partner_report(partner_id: uuid.UUID, request: Request, user: AnyUser)
             "note": "Synthetic demo partner. Figures are simulated and uncalibrated."}
 
 
-@app.get("/v1/mirofish/status")
-async def mirofish_status(request: Request, user: Staff) -> dict[str, Any]:
-    s = get_settings()
-    try:
-        async with httpx.AsyncClient(timeout=5) as c:
-            ready = (await c.get(f"{s.MIROFISH_BACKEND_URL}/health")).status_code == 200
-    except httpx.HTTPError:
-        raise ProblemError(503, "mirofish-unreachable", "MiroFish is not reachable") from None
-    async with engine(request).connect() as conn:
-        row = (await conn.execute(text("select project_id, graph_id, simulation_id, agent_id from lab.mirofish_project"))).first()
-    return {"ready": ready, **(dict(row._mapping) if row else {})}
+from .mirofish import router as mirofish_router  # noqa: E402
 
-
-class ChatIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    prompt: str = Field(min_length=1, max_length=500)
-
-
-@app.post("/v1/mirofish/chat")
-async def mirofish_chat(body: ChatIn, request: Request, user: Staff) -> dict[str, Any]:
-    s = get_settings()
-    async with engine(request).connect() as conn:
-        row = (await conn.execute(text("select simulation_id, agent_id from lab.mirofish_project"))).first()
-    if row is None or not row.simulation_id:
-        raise ProblemError(409, "mirofish-chat-failed", "No live MiroFish simulation is registered")
-    try:
-        async with httpx.AsyncClient(timeout=180) as c:
-            r = await c.post(f"{s.MIROFISH_BACKEND_URL}/api/simulation/interview",
-                             json={"simulation_id": row.simulation_id, "agent_id": row.agent_id or 0,
-                                   "prompt": body.prompt, "platform": "reddit", "timeout": 150})
-    except httpx.HTTPError:
-        raise ProblemError(503, "mirofish-unreachable", "MiroFish is not reachable") from None
-    data = r.json()
-    if r.status_code != 200 or not data.get("success"):
-        raise ProblemError(502, "mirofish-chat-failed", "MiroFish could not answer", str(data.get("error", ""))[:200])
-    return {"live": True, "agent_id": row.agent_id or 0, "reply": data["data"].get("result")}
+app.include_router(mirofish_router)

@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root { color-scheme: dark; }
+body { background: #07080a; color: #e7e9ee; }
+.bg-stage {
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(228,0,43,.28), transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, rgba(120,40,200,.18), transparent 60%),
+    radial-gradient(800px 600px at 50% 120%, rgba(228,0,43,.12), transparent 60%), #07080a;
+}
+.glass { background: rgba(15,17,21,.72); backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,.08); }
+.chip { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); }
+.chip:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.18); }
+.scroll-thin::-webkit-scrollbar { width: 6px } .scroll-thin::-webkit-scrollbar-thumb { background: #2a2e36; border-radius: 3px }

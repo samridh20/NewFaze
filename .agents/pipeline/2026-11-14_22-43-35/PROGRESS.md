@@ -87,3 +87,9 @@ P6 fixture gateway + scrim runner (record/replay), P7 Signal Lab API, P8 seed + 
 Gemini preflight (one request each): gemini-3.8-flash TIMEOUT at 120 s (not retried); gemini-3.5-flash-lite OK. Both LiteLLM roles are set to gemini-3.5-flash-lite until the user says otherwise.
 MiroFish chain steps 1-7 PASS live (evidence .local/evidence/mirofish-chain.json); step 8 passes in Playwright via the Lab proxy. Step 6 note: runner_status running, round counter 0 at check time, agent chat answered live.
 DEFERRED: OASIS 0.2.6 driver proof, CC-3 compose init, CC-4 colima-up/health/migrate-roundtrip, CC-8, CC-9, CC-12 lab_0002, CC-16, lint (507 ruff findings), mypy, compose services for app, packages/ui, Lore/Council/backtest seeds.
+## Checkpoint 4 (own UI)
+- MiroFish image now `faze/mirofish:v0.1.2-985f89f-en` = pinned commit + infra/mirofish/patches/0001 (English prompts, US country default, evening-peak start). Build: `cd infra/mirofish/checkout && git apply ../patches/0001-*.patch && docker build -t faze/mirofish:v0.1.2-985f89f-en .`
+- Signal Lab web is Next.js 15 + Tailwind (apps/signal-lab-web, :3002): MiroFish dashboard (scenarios, run pipeline, live force graph, feed, crowd lean, agent interview, monitor), Scrims, VOD Review, Partners.
+- Odyssey web is Next.js 15 (apps/odyssey-web, :3001): Lobby, Drop with HLS players + synced replay + countdown + SSE, Final Cut with sequence player, real tally, Sim vs Fans, credits.
+- signal_lab_api/mirofish.py orchestrates real MiroFish runs. MiroFish v0.1.2's round counter never advances; completion = env-status alive.
+- Live run sim_e4b9f51cdfb6 (12 rounds, 6 agents): English personas, 7 posts + 5 replies. Total LiteLLM spend so far $0.07 of the $0.50 MiroFish cap.

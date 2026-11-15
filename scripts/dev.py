@@ -21,7 +21,8 @@ SERVICES = [  # name, role, command
     ("signal-lab-api", "lab", ["-m", "uvicorn", "signal_lab_api.main:app", "--port", "8002"]),
     ("relay", "relay", ["-m", "workers.relay"]),
     ("janitor", "workers", ["-m", "workers.janitor"]),
-    ("web", "", [str(ROOT / "apps" / "serve.py")]),
+    ("odyssey-web", "", ["NPM", "run", "dev", "-w", "odyssey-web"]),
+    ("signal-lab-web", "", ["NPM", "run", "dev", "-w", "signal-lab-web"]),
 ]
 
 
@@ -34,7 +35,8 @@ def main() -> int:
                 key, _, value = line.partition("=")
                 env.setdefault(key.strip(), value.strip())
         env.update(PYTHONPATH=LIB, SERVICE_ROLE=role)
-        procs.append((name, subprocess.Popen([PY, *args], cwd=ROOT, env=env, stdout=open(ROOT / ".local" / f"{name}.log", "w"),
+        cmd = ["npm", *args[1:]] if args[0] == "NPM" else [PY, *args]
+        procs.append((name, subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=open(ROOT / ".local" / f"{name}.log", "w"),
                                              stderr=subprocess.STDOUT)))
         print("started", name)
     def stop(*_):

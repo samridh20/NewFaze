@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+:root { color-scheme: dark; }
+body { background: #050506; color: #f1f2f4; }
+.bg-stage {
+  background:
+    radial-gradient(1000px 520px at 50% -12%, rgba(228,0,43,.35), transparent 62%),
+    radial-gradient(700px 400px at 0% 30%, rgba(228,0,43,.10), transparent 60%),
+    radial-gradient(700px 400px at 100% 60%, rgba(90,30,180,.12), transparent 60%), #050506;
+}
+.glass { background: rgba(16,17,20,.72); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,.08); }
+.chip { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09); }
+.faze-stripe { background: repeating-linear-gradient(-45deg, rgba(228,0,43,.9) 0 8px, rgba(228,0,43,.6) 8px 16px); }
