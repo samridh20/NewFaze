@@ -34,9 +34,9 @@ SCENARIOS: dict[str, dict[str, str]] = {
     },
     "recruitment-masked": {
         "label": "Org A recruitment", "tag": "Masked backtest",
-        "requirement": "Org A runs two open recruitment challenges. Challenge 1: open to every kind of creator, five "
-                       "spots, a modest cash prize each. Challenge 2: one spot, a very large crypto prize, finalists "
-                       "living on stream. Predict which challenge gets more entries and why. English-speaking fans.",
+        "requirement": "Org A runs two recruitment challenges, described in the document. Simulate how creators and "
+                       "fans react, which challenge each person would enter, and which challenge attracts more total "
+                       "entries and by roughly how much. All agents are English-speaking creators and fans.",
     },
     "sponsor-reveal": {
         "label": "Sponsor reveal", "tag": "Partners",
@@ -107,8 +107,11 @@ async def _poll(fn, done, timeout_s: int, every: float = 4) -> dict[str, Any]:
     raise TimeoutError("MiroFish step timed out")
 
 
+PACKS = {"recruitment-masked": "recruitment-masked.md"}  # masked cases must not reuse the FaZe fan pack
+
+
 def build_pack(scenario: str, prompt: str) -> str:
-    pack = (get_settings_root() / "seeds" / "mirofish" / "pack.md").read_text()
+    pack = (get_settings_root() / "seeds" / "mirofish" / PACKS.get(scenario, "pack.md")).read_text()
     extra = SCENARIOS.get(scenario, {}).get("requirement", "")
     return f"{pack}\n\n## Scenario\n{extra}\n\n## Analyst question\n{prompt}\n"
 
@@ -238,8 +241,9 @@ async def graph(request: Request, user: Principal = Staff) -> dict[str, Any]:
     return {"graph_id": graph_id, "nodes": nodes, "edges": edges}
 
 
-A_RE = re.compile(r"\b(clip a|variant a|brief a|challenge 1|option a)\b", re.I)
-B_RE = re.compile(r"\b(clip b|variant b|brief b|challenge 2|option b)\b", re.I)
+A_RE = re.compile(r"\b(clip a|variant a|brief a|option a|challenge (1|one)|first challenge|five[- ]spot\w*|five spots)\b", re.I)
+B_RE = re.compile(r"\b(clip b|variant b|brief b|option b|challenge (2|two)|second challenge|one[- ]spot\w*|single spot|"
+                  r"million[- ]dollar|\$1,?000,?000|\$1m)\b", re.I)
 
 
 @router.get("/feed")
