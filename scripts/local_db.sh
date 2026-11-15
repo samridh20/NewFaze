@@ -20,7 +20,7 @@ load_env() {
       DATABASE_NAME|OWNER_DB_PASSWORD|ODYSSEY_DB_PASSWORD|LAB_DB_PASSWORD|RELAY_DB_PASSWORD|WORKERS_DB_PASSWORD|LITELLM_DB_PASSWORD)
         export "$key=$value" ;;
     esac
-  done < "$ROOT/infra/.env"
+  done < <(cat "$ROOT/infra/.env" "$ROOT"/infra/.env.owner "$ROOT"/infra/.env.odyssey "$ROOT"/infra/.env.lab "$ROOT"/infra/.env.relay "$ROOT"/infra/.env.workers)
 }
 
 install_pgvector() {

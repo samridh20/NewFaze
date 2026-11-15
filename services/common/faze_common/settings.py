@@ -11,9 +11,24 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 ROOT = Path(__file__).resolve().parents[3]
-ENV_FILES = tuple(
-    str(p) for p in (ROOT / "infra" / ".env", ROOT / "infra" / ".env.lab") if p.exists()
-) if not os.environ.get("ENV_FILE") else tuple(os.environ["ENV_FILE"].split(os.pathsep))
+# CC-2: every process loads infra/.env (non-secret) plus only the env files of its own SERVICE_ROLE(S).
+# Roles: odyssey, lab, relay, workers, owner. "all" exists for tests and is refused outside APP_ENV local/test.
+ROLE_FILES = ("odyssey", "lab", "relay", "workers", "owner")
+
+
+def env_files() -> tuple[str, ...]:
+    if os.environ.get("ENV_FILE"):
+        return tuple(os.environ["ENV_FILE"].split(os.pathsep))
+    roles = [r.strip() for r in os.environ.get("SERVICE_ROLE", "").split(",") if r.strip()]
+    if "all" in roles:
+        if os.environ.get("APP_ENV", "local") not in {"local", "test"}:
+            raise RuntimeError("SERVICE_ROLE=all is only allowed in local or test")
+        roles = list(ROLE_FILES)
+    paths = [ROOT / "infra" / ".env", *(ROOT / "infra" / f".env.{r}" for r in roles if r in ROLE_FILES)]
+    return tuple(str(p) for p in paths if p.exists())
+
+
+ENV_FILES = env_files()
 
 
 class Settings(BaseSettings):

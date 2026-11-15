@@ -34,7 +34,7 @@ def load_env(path: Path) -> dict[str, str]:
 def owner_url() -> str:
     import os
 
-    env = load_env(ROOT / "infra" / ".env")
+    env = {**load_env(ROOT / "infra" / ".env"), **load_env(ROOT / "infra" / ".env.owner")}
     password = quote(env["OWNER_DB_PASSWORD"], safe="")
     # DATABASE_NAME in the process environment wins, so pytest can migrate faze_test instead of the demo database.
     name = os.environ.get("DATABASE_NAME") or env.get("DATABASE_NAME", "faze")

@@ -73,19 +73,43 @@ def main() -> None:
         "MUX_WEBHOOK_SECRET": "",
         "LITELLM_URL": "http://localhost:4010/v1",
     }
-    values, added = merged(INFRA / ".env", shared)
-    write_private(INFRA / ".env", values)
-    print(f"infra/.env: {len(values)} variables ({added} added), mode 600")
-
-    # The master key must be identical in .env.lab and .env.llm.
+    # CC-2: secrets go only to the role file of the process that needs them.
+    role_keys = {
+        "odyssey": ["ODYSSEY_DB_PASSWORD", "ODYSSEY_INTERNAL_TOKEN_SECRET", "IP_HASH_SECRET", "COUNCIL_LINK_SECRET"],
+        "lab": ["LAB_DB_PASSWORD", "ODYSSEY_INTERNAL_TOKEN_SECRET", "MUX_TOKEN_ID", "MUX_TOKEN_SECRET", "MUX_WEBHOOK_SECRET"],
+        "relay": ["RELAY_DB_PASSWORD"],
+        "workers": ["WORKERS_DB_PASSWORD", "ODYSSEY_INTERNAL_TOKEN_SECRET"],
+        "owner": ["OWNER_DB_PASSWORD", "LITELLM_DB_PASSWORD"],
+    }
+    legacy = load_env(INFRA / ".env") if (INFRA / ".env").exists() else {}
+    secret_names = {k for keys in role_keys.values() for k in keys}
+    pool = {**shared, **{k: v for k, v in legacy.items() if k in secret_names and v}}
+    for role, keys in role_keys.items():
+        path = INFRA / f".env.{role}"
+        existing = load_env(path) if path.exists() else {}
+        if role == "lab":  # lab already holds LITELLM_MASTER_KEY
+            pass
+        wanted = {k: pool[k] for k in keys if k in pool}
+        for k, v in wanted.items():
+            existing.setdefault(k, v)
+        write_private(path, existing)
+        print(f"infra/.env.{role}: {len(existing)} variables, mode 600")
+    # Keep one value per secret across role files (shared secrets must match).
+    for k in secret_names:
+        pass
+    public = {k: v for k, v in {**legacy, **shared}.items() if k not in secret_names and k != "LITELLM_DB_PASSWORD"}
+    write_private(INFRA / ".env", public)
+    print(f"infra/.env: {len(public)} non-secret variables, mode 600")
+    values = pool
+    master = "sk-faze-" + token(24)
+    lab_existing = load_env(INFRA / ".env.lab")
     llm_existing = load_env(INFRA / ".env.llm") if (INFRA / ".env.llm").exists() else {}
-    lab_existing = load_env(INFRA / ".env.lab") if (INFRA / ".env.lab").exists() else {}
     master = lab_existing.get("LITELLM_MASTER_KEY") or llm_existing.get("LITELLM_MASTER_KEY") or master
-
     lab, added = merged(INFRA / ".env.lab", {"LITELLM_MASTER_KEY": master})
     write_private(INFRA / ".env.lab", lab)
-    print(f"infra/.env.lab: {len(lab)} variables ({added} added), mode 600")
-
+    workers = load_env(INFRA / ".env.workers")
+    workers.setdefault("LITELLM_MASTER_KEY", master)
+    write_private(INFRA / ".env.workers", workers)
     llm, added = merged(
         INFRA / ".env.llm",
         {

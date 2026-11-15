@@ -17,6 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 os.environ["DATABASE_NAME"] = "faze_test"
 os.environ["DEMO_MODE"] = "1"
+os.environ["SERVICE_ROLE"] = "all"
 os.environ["APP_ENV"] = "test"
 os.environ["DEV_AUTH_KEY_DIR"] = str(ROOT / ".local" / "dev-auth-test")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/9")  # database 9, never the demo's 0

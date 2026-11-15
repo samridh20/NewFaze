@@ -77,13 +77,13 @@ litellm-guard: ## Fail if LiteLLM 1.82.7 or 1.82.8 is referenced anywhere
 check: lint typecheck secret-scan litellm-guard test ## All quality gates
 
 compose-check:
-	docker compose -f infra/docker-compose.yml config --quiet
+	docker compose --env-file infra/.env --env-file infra/.env.owner -f infra/docker-compose.yml config --quiet
 
 compose-up:
-	docker compose -f infra/docker-compose.yml up -d --build
+	docker compose --env-file infra/.env --env-file infra/.env.owner -f infra/docker-compose.yml up -d --build
 
 compose-down:
-	docker compose -f infra/docker-compose.yml down
+	docker compose --env-file infra/.env --env-file infra/.env.owner -f infra/docker-compose.yml down
 
 # ---- Live targets spend real tokens. They print a ceiling and need CONFIRM_LIVE=1 (NFR-10). ----
 live-check-gemini: ## Needs CONFIRM_LIVE=1. Checks the key can see and generate with each model
