@@ -14,6 +14,7 @@ from sqlalchemy import text
 from faze_common.auth import Principal, current_principal
 from faze_common.errors import ProblemError
 from faze_common.ratelimit import RateLimitUnavailable, client_ip, hash_ip
+from faze_common.settings import get_settings
 
 from . import sse
 from .app_factory import build_app
@@ -22,6 +23,11 @@ from .domain import council, outbox, votes
 from .domain.idempotency import run_idempotent, validate_key
 
 app = build_app("public")
+if get_settings().DEMO_MODE:  # local HLS for the seeded clips (FR-20.1); never mounted when DEMO_MODE is off
+    from fastapi.staticfiles import StaticFiles
+    from .adapters import MEDIA_DIR
+    MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+    app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 fan = current_principal("fan")
 _REFERRAL = re.compile(r"^[A-Za-z0-9_.:\-]{1,64}$")
 
