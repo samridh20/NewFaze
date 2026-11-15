@@ -6,7 +6,7 @@ import { Nav } from "@/components/Nav";
 const display = Inter({ subsets: ["latin"], variable: "--font-display" });
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
 
-export const metadata: Metadata = { title: "Signal Lab · FaZe Odyssey", description: "Scrims, MiroFish and VOD Review" };
+export const metadata: Metadata = { title: "Signal Lab · nextFAZE", description: "FaZe decision intelligence, audience simulation and ecosystem analysis" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

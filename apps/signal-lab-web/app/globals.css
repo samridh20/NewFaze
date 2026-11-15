@@ -1,15 +1,31 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-:root { color-scheme: dark; }
-body { background: #07080a; color: #e7e9ee; }
+:root { color-scheme: dark; --next-red:#f31c22; --next-paper:#f1ece2; }
+body { background: #0d0d0b; color: var(--next-paper); }
 .bg-stage {
   background:
-    radial-gradient(1200px 600px at 15% -10%, rgba(228,0,43,.28), transparent 60%),
-    radial-gradient(900px 500px at 100% 0%, rgba(120,40,200,.18), transparent 60%),
-    radial-gradient(800px 600px at 50% 120%, rgba(228,0,43,.12), transparent 60%), #07080a;
+    linear-gradient(90deg, transparent 49.92%, rgba(255,255,255,.025) 50%, transparent 50.08%),
+    radial-gradient(1100px 560px at 10% -10%, rgba(243,28,34,.25), transparent 62%),
+    radial-gradient(900px 560px at 100% 5%, rgba(243,28,34,.08), transparent 64%), #0d0d0b;
 }
-.glass { background: rgba(15,17,21,.72); backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,.08); }
-.chip { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); }
-.chip:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.18); }
+.glass { background: rgba(18,18,16,.84); backdrop-filter: blur(18px); border: 1px solid rgba(241,236,226,.13); border-radius:2px !important; box-shadow:0 18px 70px rgba(0,0,0,.2); }
+.chip { background: rgba(241,236,226,.035); border: 1px solid rgba(241,236,226,.11); border-radius:1px !important; }
+.chip:hover { background: rgba(241,236,226,.07); border-color: rgba(241,236,226,.22); }
 .scroll-thin::-webkit-scrollbar { width: 6px } .scroll-thin::-webkit-scrollbar-thumb { background: #2a2e36; border-radius: 3px }
+.signal-nav:after { content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px; background:linear-gradient(90deg,var(--next-red),transparent 38%); }
+.signal-icon { box-shadow:7px 7px 0 rgba(243,28,34,.17); }
+.signal-wordmark { letter-spacing:-.03em; }
+.signal-wordmark span { color:var(--next-red); }
+.signal-links { border-color:rgba(241,236,226,.12); }
+h1,h2,h3 { letter-spacing:-.025em; }
+h1 { text-transform:uppercase; }
+button,input,textarea { border-radius:2px !important; }
+button { text-transform:uppercase; letter-spacing:.025em; }
+::selection { background:var(--next-red); color:white; }
+@media (max-width:760px) {
+  .signal-nav > div { align-items:flex-start; flex-direction:column; }
+  .signal-links { width:100%; overflow-x:auto; }
+  .signal-links a { white-space:nowrap; }
+  .fan-return { margin-left:auto; }
+}

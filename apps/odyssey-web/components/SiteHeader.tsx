@@ -7,6 +7,7 @@ import { SessionBadge } from "./SessionBadge";
 export function SiteHeader() {
   const path = usePathname();
   const [expanded, setExpanded] = useState(false);
+  const signalLabUrl = process.env.NEXT_PUBLIC_SIGNAL_LAB_URL ?? "http://localhost:3002";
   const links = [
     { href: "/", label: "Home", active: path === "/" },
     { href: "/archive", label: "Archive", active: path.startsWith("/archive") },
@@ -53,6 +54,9 @@ export function SiteHeader() {
             {l.label}
           </Link>
         ))}
+        <a className="signal-lab-link" href={signalLabUrl} onClick={() => setExpanded(false)}>
+          Signal Lab ↗
+        </a>
         <SessionBadge />
       </nav>
     </header>

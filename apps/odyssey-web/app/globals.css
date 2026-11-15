@@ -2205,6 +2205,8 @@ figcaption a {
 .site-header:not(.header-light) .brand-mark {
   filter: invert(1) brightness(1.8);
 }
+.site-header .signal-lab-link { color:var(--red); font-size:14px; }
+.site-header .signal-lab-link:hover { color:inherit; }
 .header-light .brand-mark {
   filter: none;
 }
