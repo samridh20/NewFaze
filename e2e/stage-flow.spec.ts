@@ -34,4 +34,6 @@ test("Drop, vote, close, publish, Final Cut, Sim vs Fans, VOD Review, Partners",
   await expect(page.getByTestId("partner").first()).toContainText("fictional");
   await page.goto(`${LAB}/mirofish`);
   await expect(page.getByTestId("mf-status")).toContainText("Live MiroFish reachable");
+  await page.getByRole("button", { name: "Ask the simulated fan" }).click();
+  await expect(page.getByTestId("mf-reply")).toContainText("LIVE reply", { timeout: 150_000 });
 });

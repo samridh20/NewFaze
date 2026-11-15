@@ -60,6 +60,15 @@ async def main() -> int:
                             {"i": partner_id(key), "n": name})
             await c.execute(text("insert into lab.activations (partner_id, campaign_slug, name, placement) values "
                                  "(:p,'homecoming-week1',:n,'end card')"), {"p": partner_id(key), "n": f"{name} end-card"})
+        evidence = ROOT / ".local" / "evidence" / "mirofish-chain.json"
+        if evidence.exists():  # ids of the live MiroFish chain run, so Signal Lab can chat with the real simulation
+            import json
+            by = {r["name"]: r["evidence"] for r in json.loads(evidence.read_text())}
+            if by.get("agent-chat") and by.get("simulation-prepared"):
+                await c.execute(text("insert into lab.mirofish_project (pin, project_id, graph_id, simulation_id, agent_id) "
+                                     "values ('v0.1.2-985f89f',:p,:g,:s,0)"),
+                                {"p": by["project-created"]["project_id"], "g": by["graph-built"]["graph_id"],
+                                 "s": by["simulation-prepared"]["simulation_id"]})
     await eng.dispose()
     print(f"seeded: campaign homecoming-week1 in voting, ballot {bid}, {len(DEMO_ACCOUNTS)} accounts, {len(PARTNER_NAMES)} partners")
     return 0

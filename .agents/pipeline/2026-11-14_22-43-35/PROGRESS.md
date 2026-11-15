@@ -80,3 +80,10 @@ Next when unblocked: (1) confirm MiroFish /health + isolation, (2) Q-9 -> set GE
 - [ ] MiroFish live chain 1..7
 - [ ] App slice (APIs, workers, web apps, seeds)
 - [ ] Stage flow incl. step 8 and Playwright
+## Checkpoint 3 (resume session)
+DONE: baseline fix (pytest pythonpath, race-test threshold), CC-1 commitment-only Sim vs Fans, CC-2 per-role env files, CC-5 one-request Gemini preflight,
+CC-6/10/11 odyssey_0002, CC-7 wh_0002, CC-13 Supabase role mapping, CC-14 secret_scan + litellm guard, P5 workers (relay, janitor, outcome freeze),
+P6 fixture gateway + scrim runner (record/replay), P7 Signal Lab API, P8 seed + ffmpeg media, minimal web (3001/3002), `make dev`, `make e2e`.
+Gemini preflight (one request each): gemini-3.8-flash TIMEOUT at 120 s (not retried); gemini-3.5-flash-lite OK. Both LiteLLM roles are set to gemini-3.5-flash-lite until the user says otherwise.
+MiroFish chain steps 1-7 PASS live (evidence .local/evidence/mirofish-chain.json); step 8 passes in Playwright via the Lab proxy. Step 6 note: runner_status running, round counter 0 at check time, agent chat answered live.
+DEFERRED: OASIS 0.2.6 driver proof, CC-3 compose init, CC-4 colima-up/health/migrate-roundtrip, CC-8, CC-9, CC-12 lab_0002, CC-16, lint (507 ruff findings), mypy, compose services for app, packages/ui, Lore/Council/backtest seeds.
