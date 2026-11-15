@@ -1,86 +1,262 @@
 "use client";
 import Link from "next/link";
 import { use, useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { ExternalLink, Sparkles, Trophy } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUpRight, Trophy } from "lucide-react";
 import { api } from "@/lib/api";
 import { HlsPlayer } from "@/components/HlsPlayer";
-
-export default function FinalCut({ params }: { params: Promise<{ slug: string }> }) {
+import { campaignHref, media } from "@/lib/content";
+type Credit = {
+  id: string;
+  handle: string;
+  role: string;
+  channel_url: string | null;
+};
+type Episode = {
+  title: string;
+  campaign_slug: string;
+  published_at: string;
+  credits: Credit[];
+  sequence: { kind: string; playback_url: string | null }[];
+  real: { labels: Record<string, string>; tally: Record<string, number> };
+  sim_vs_fans: {
+    predicted: Record<string, number>;
+    real: Record<string, number>;
+  } | null;
+};
+export default function FinalCut({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
   const { slug } = use(params);
-  const [ep, setEp] = useState<any>(null);
-  const [status, setStatus] = useState(0);
+  const [episode, setEpisode] = useState<Episode | null>(null);
+  const [status, setStatus] = useState("loading");
   const [part, setPart] = useState(0);
-  useEffect(() => { api(`/v1/episodes/${slug}`).then((r) => { setStatus(r.status); setEp(r.body); }); api(`/v1/episodes/${slug}/views`, { method: "POST" }); }, [slug]);
-  if (!status) return <div className="pt-20 text-center text-white/40">Loading…</div>;
-  if (status !== 200) return <div className="pt-20 text-center text-white/55">Not published yet.</div>;
-  const labels = ep.real.labels ?? {}, tally: Record<string, number> = ep.real.tally ?? {};
-  const total = Object.values(tally).reduce((a, b) => a + Number(b), 0);
-  const playable = ep.sequence.filter((p: any) => p.playback_url);
-  const svf = ep.sim_vs_fans;
-  const winner = ep.credits.find((c: any) => c.role === "winner");
-  return (
-    <div className="pt-8">
-      <Link href="/" className="text-sm text-white/45 hover:text-white">← Lobby</Link>
-      <p className="mt-4 text-xs font-bold uppercase tracking-[.3em] text-faze-red">Final Cut</p>
-      <h1 data-testid="episode-title" className="mt-2 text-3xl font-black md:text-5xl">{ep.title}: Final Cut</h1>
-      {winner && <p className="mt-2 flex items-center gap-2 text-lg text-white/75"><Trophy size={18} className="text-amber-300" /> Winner: <b>@{winner.handle}</b></p>}
-
-      <div className="mt-6 overflow-hidden rounded-3xl glass">
-        <div className="aspect-video bg-black"><HlsPlayer key={part} src={playable[part]?.playback_url ?? null} autoPlay className="h-full w-full" onEnded={() => setPart((p) => Math.min(p + 1, playable.length - 1))} label="Final Cut" /></div>
-        <div data-testid="sequence" className="flex gap-2 overflow-x-auto p-3">
-          {playable.map((p: any, i: number) => (
-            <button key={i} onClick={() => setPart(i)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold uppercase ${i === part ? "bg-faze-red" : "chip"}`}>{p.kind.replace("_", " ")}</button>
-          ))}
-        </div>
+  useEffect(() => {
+    let active = true;
+    api<Episode>(`/v1/episodes/${slug}`)
+      .then((r) => {
+        if (!active) return;
+        if (r.status === 200) {
+          setEpisode(r.body);
+          setStatus("ready");
+          api(`/v1/episodes/${slug}/views`, { method: "POST" }).catch(() => {});
+        } else setStatus(r.status === 404 ? "unpublished" : "offline");
+      })
+      .catch(() => {
+        if (active) setStatus("offline");
+      });
+    return () => {
+      active = false;
+    };
+  }, [slug]);
+  if (!episode)
+    return (
+      <div className="page-shell empty-page">
+        <p className="eyebrow red">
+          THE FINAL CUT / {status === "loading" ? "LOADING" : "THE NEXT FRAME"}
+        </p>
+        <h1>
+          {status === "loading"
+            ? "GETTING THE CUT."
+            : status === "unpublished"
+              ? "THE STORY ISN’T\nFINISHED YET."
+              : "THE CUT IS\nOFFLINE."}
+        </h1>
+        <p>
+          {status === "loading"
+            ? "Checking for the published episode…"
+            : status === "unpublished"
+              ? "This episode hasn’t been published yet. Explore the current campaign while you wait."
+              : "We couldn’t reach the episode service. Try again when it’s connected."}
+        </p>
+        <Link href={campaignHref} className="button primary">
+          Back to the campaign <ArrowRight size={20} />
+        </Link>
       </div>
-
-      <div className="mt-6 grid gap-6 md:grid-cols-2">
-        <div data-testid="real-tally" className="rounded-3xl p-6 glass">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-white/45">Real result</h3>
-          <div className="mt-4 space-y-4">
-            {Object.entries(tally).map(([k, v]) => (
-              <div key={k}>
-                <div className="flex justify-between text-sm font-semibold"><span>Clip {labels[k] ?? k}: {v} votes</span><span>{total ? Math.round((Number(v) / total) * 100) : 0}%</span></div>
-                <div className="mt-1.5 h-3 overflow-hidden rounded-full bg-white/5"><motion.div initial={{ width: 0 }} animate={{ width: `${total ? (Number(v) / total) * 100 : 0}%` }} className="h-full rounded-full bg-faze-red" /></div>
+    );
+  const playable = episode.sequence.filter((p) => p.playback_url);
+  const winner = episode.credits.find((c) => c.role === "winner");
+  const total = Object.values(episode.real.tally).reduce(
+    (sum, value) => sum + value,
+    0,
+  );
+  const sim = episode.sim_vs_fans;
+  const channel = (url: string | null) => {
+    try {
+      const parsed = new URL(url ?? "");
+      return ["http:", "https:"].includes(parsed.protocol) ? parsed.href : null;
+    } catch {
+      return null;
+    }
+  };
+  return (
+    <div className="page-shell release-page">
+      <div className="page-kicker">
+        <Link href={`/make-the-cut/${episode.campaign_slug}`}>
+          <ArrowLeft size={13} /> BACK TO THE CAMPAIGN
+        </Link>
+        <span>
+          PUBLISHED / {new Date(episode.published_at).toLocaleDateString()}
+        </span>
+      </div>
+      <h1 className="release-title" data-testid="episode-title">
+        {episode.title}
+        <span className="red">.</span>
+      </h1>
+      <div className="release-grid">
+        <div>
+          <div className="media-frame">
+            {playable.length ? (
+              <HlsPlayer
+                key={part}
+                src={playable[part]?.playback_url ?? null}
+                poster={media.nightshift.poster}
+                className="media-video"
+                onEnded={() =>
+                  setPart((p) => Math.min(p + 1, playable.length - 1))
+                }
+                autoPlay={part > 0}
+                label="Final Cut"
+              />
+            ) : (
+              <div className="media-placeholder">
+                <p>The episode is published.</p>
+                <small>Playable footage is not available yet.</small>
               </div>
+            )}
+          </div>
+          <div
+            className="sequence-tabs"
+            data-testid="sequence"
+            aria-label="Episode sequence"
+          >
+            {playable.map((p, i) => (
+              <button
+                key={i}
+                onClick={() => setPart(i)}
+                aria-pressed={part === i}
+              >
+                {String(i + 1).padStart(2, "0")} / {p.kind.replaceAll("_", " ")}
+              </button>
             ))}
           </div>
         </div>
-        {svf && (
-          <div data-testid="sim-vs-fans" className="rounded-3xl p-6 glass">
-            <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-white/45"><Sparkles size={13} /> Sim vs Fans</h3>
-              <span className="rounded-md bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-300">simulated · uncalibrated</span>
+        <aside className="release-sidebar">
+          <p className="eyebrow red">THE COMMUNITY MADE THE CALL.</p>
+          <h2>
+            THE FINAL
+            <br />
+            FRAME IS
+            <br />
+            <em>FILLED.</em>
+          </h2>
+          {winner && (
+            <p>
+              <Trophy size={18} /> Final clip by{" "}
+              <strong>@{winner.handle}</strong>
+            </p>
+          )}
+          <p>
+            A community choice. A permanent credit. Another chapter in the
+            story.
+          </p>
+          <Link className="button primary" href="/archive">
+            Into the archive <ArrowRight size={18} />
+          </Link>
+          <p className="eyebrow" style={{ marginTop: 30 }}>
+            UP NEXT / THE ROTATION
+          </p>
+          <Link href="/make-the-cut#upcoming">
+            <img
+              src={media.antwerp.poster}
+              alt="Illustrative next campaign artwork"
+            />
+            <h2>
+              CALL THE PLAY <ArrowUpRight size={24} />
+            </h2>
+          </Link>
+        </aside>
+      </div>
+      <div className="release-results">
+        <section className="result-panel" data-testid="real-tally">
+          <p className="eyebrow red">THE OFFICIAL BALLOT</p>
+          <h3>THE FANS CALLED IT.</h3>
+          {Object.entries(episode.real.tally).map(([key, value]) => (
+            <div key={key}>
+              <div className="tally-row">
+                <span>
+                  Clip {episode.real.labels[key] ?? key}: {value} votes
+                </span>
+                <span>{total ? Math.round((value / total) * 100) : 0}%</span>
+              </div>
+              <div className="tally-track">
+                <span
+                  style={{ width: `${total ? (value / total) * 100 : 0}%` }}
+                />
+              </div>
             </div>
-            <div className="mt-4 space-y-4">
-              {Object.keys(svf.predicted).map((k) => {
-                const sim = svf.predicted[k] * 100, real = total ? (Number(svf.real[k]) / total) * 100 : 0;
-                return (
-                  <div key={k}>
-                    <div className="text-sm font-semibold">Clip {labels[k] ?? k}</div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-white/50"><span className="w-14">simulated</span><div className="h-2 flex-1 rounded-full bg-white/5"><motion.div initial={{ width: 0 }} animate={{ width: `${sim}%` }} className="h-2 rounded-full bg-amber-300" /></div><span className="w-9 text-right">{sim.toFixed(0)}%</span></div>
-                    <div className="mt-1 flex items-center gap-2 text-[11px] text-white/50"><span className="w-14">fans</span><div className="h-2 flex-1 rounded-full bg-white/5"><motion.div initial={{ width: 0 }} animate={{ width: `${real}%` }} className="h-2 rounded-full bg-faze-red" /></div><span className="w-9 text-right">{real.toFixed(0)}%</span></div>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="mt-4 text-[11px] text-white/40">The simulated prediction was locked as a hash before voting closed, so it could not be changed after the result.</p>
-          </div>
+          ))}
+          {!total && (
+            <p className="subtle-note">
+              No votes were recorded for this ballot.
+            </p>
+          )}
+        </section>
+        {sim && (
+          <section className="result-panel" data-testid="sim-vs-fans">
+            <h3>SIM VS FANS</h3>
+            <p className="sim-note">
+              simulated · uncalibrated · experimental comparison
+            </p>
+            {Object.entries(sim.predicted).map(([key, value]) => (
+              <div className="tally-row" key={key}>
+                <span>Clip {episode.real.labels[key] ?? key}</span>
+                <span>
+                  Simulation {Math.round(value * 100)}% / Fans{" "}
+                  {total ? Math.round(((sim.real[key] ?? 0) / total) * 100) : 0}
+                  %
+                </span>
+              </div>
+            ))}
+            <p className="subtle-note">
+              A synthetic prediction, kept separate from the real ballot
+              results.
+            </p>
+          </section>
         )}
       </div>
-
-      <div className="mt-6 rounded-3xl p-6 glass">
-        <h3 className="text-xs font-semibold uppercase tracking-widest text-white/45">Credits</h3>
-        <ul className="mt-3 grid gap-2 md:grid-cols-2">
-          {ep.credits.map((c: any) => (
-            <li key={c.id} className="flex items-center justify-between rounded-xl px-4 py-3 chip">
-              <span><span className="text-xs uppercase text-white/40">{c.role}</span> <b className="ml-2">@{c.handle}</b></span>
-              {c.channel_url && <a href={c.channel_url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm text-faze-red">Channel <ExternalLink size={13} /></a>}
+      <p className="eyebrow red">MADE BY THE COMMUNITY</p>
+      <h2 className="release-section-heading">ROLL THE CREDITS.</h2>
+      <ul className="credits-list">
+        {episode.credits.map((c) => {
+          const url = channel(c.channel_url);
+          return (
+            <li key={c.id}>
+              <div>
+                <small>{c.role}</small>
+                <b>@{c.handle}</b>
+              </div>
+              {url && (
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-link"
+                  onClick={() => {
+                    api("/v1/credits/click", {
+                      method: "POST",
+                      body: JSON.stringify({ credit_id: c.id }),
+                    }).catch(() => {});
+                  }}
+                >
+                  Creator channel <ArrowUpRight size={16} />
+                </a>
+              )}
             </li>
-          ))}
-        </ul>
-      </div>
+          );
+        })}
+      </ul>
     </div>
   );
 }

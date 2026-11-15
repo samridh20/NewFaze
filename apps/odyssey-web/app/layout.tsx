@@ -1,27 +1,39 @@
 import "./globals.css";
 import type { Metadata, Viewport } from "next";
-import Link from "next/link";
-import { Inter } from "next/font/google";
-import { SessionBadge } from "@/components/SessionBadge";
-
-const display = Inter({ subsets: ["latin"], variable: "--font-display", weight: ["400", "500", "600", "700", "800", "900"] });
-export const metadata: Metadata = { title: "FaZe Odyssey", description: "Weekly drops. You make the cut." };
-export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#050506" };
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+import { SiteHeader } from "@/components/SiteHeader";
+export const metadata: Metadata = {
+  title: {
+    default: "nextFAZE — The history. The people. What comes next.",
+    template: "%s · nextFAZE",
+  },
+  description:
+    "The moments that made us. The next one is yours. Explore FaZe history, recreate an iconic shot, and help make the next cut.",
+};
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#10100e",
+};
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="en" className={display.variable}>
-      <body className="bg-stage min-h-screen font-display antialiased">
-        <header className="sticky top-0 z-30 border-b border-white/5 bg-black/50 backdrop-blur-xl">
-          <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
-            <Link href="/" className="flex items-center gap-2">
-              <span className="grid h-8 w-8 place-items-center rounded-lg bg-faze-red text-sm font-black italic">FZ</span>
-              <span className="text-lg font-black uppercase italic tracking-tight">FaZe <span className="text-faze-red">Odyssey</span></span>
-            </Link>
-            <SessionBadge />
-          </div>
-        </header>
-        <main className="mx-auto max-w-6xl px-5 pb-20">{children}</main>
+    <html lang="en">
+      <body>
+        <a className="skip-link" href="#main">
+          Skip to content
+        </a>
+        <SiteHeader />
+        <main id="main">{children}</main>
+        <footer className="site-footer">
+          <a href="/">
+            next<span>FAZE</span>
+          </a>
+          <p>Built by the community. Made for the next generation.</p>
+          <span>EST. 2010 — STILL MAKING HISTORY.</span>
+        </footer>
       </body>
     </html>
   );

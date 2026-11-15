@@ -2,15 +2,50 @@
 import { useEffect, useState } from "react";
 import { LogIn, LogOut, User } from "lucide-react";
 import { getHandle, signIn, signOut } from "@/lib/api";
-
 export function SessionBadge() {
   const [h, setH] = useState<string | null>(null);
-  useEffect(() => { const u = () => setH(getHandle()); u(); window.addEventListener("faze-auth", u); return () => window.removeEventListener("faze-auth", u); }, []);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const u = () => setH(getHandle());
+    u();
+    window.addEventListener("faze-auth", u);
+    return () => window.removeEventListener("faze-auth", u);
+  }, []);
   return h ? (
-    <button onClick={signOut} className="flex items-center gap-2 rounded-full px-3 py-1.5 text-sm chip"><User size={14} /> {h} <LogOut size={13} className="text-white/40" /></button>
-  ) : (
-    <button id="signin" onClick={() => signIn("fan-ava")} className="flex items-center gap-2 rounded-full bg-faze-red px-4 py-1.5 text-sm font-semibold">
-      <LogIn size={14} /> Sign in as demo fan (ava)
+    <button
+      onClick={signOut}
+      className="account-button"
+      aria-label={`Sign out ${h}`}
+    >
+      <User size={14} /> {h} <LogOut size={13} />
     </button>
+  ) : (
+    <div className="account-wrap">
+      <button
+        id="signin"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError("");
+          try {
+            await signIn("fan-ava");
+          } catch {
+            setError("Start the local auth service to sign in.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="account-button"
+        aria-label="Sign in as demo fan (ava)"
+      >
+        <LogIn size={14} /> {busy ? "Connecting…" : "Sign in"}
+      </button>
+      {error && (
+        <p className="account-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

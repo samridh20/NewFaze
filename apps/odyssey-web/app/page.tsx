@@ -1,51 +1,156 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
-import { ArrowRight, Clapperboard, Flame, Timer } from "lucide-react";
-import { api } from "@/lib/api";
-
-const STATE_LABEL: Record<string, string> = { voting: "Voting open", accepting_entries: "Entries open", shortlist_locked: "Finalists locked", closed: "Voting closed", published: "Final Cut out", scheduled: "Coming soon" };
-
-export default function Lobby() {
-  const [d, setD] = useState<any>(null);
-  useEffect(() => { api("/v1/lobby").then((r) => setD(r.body)); }, []);
-  const w = d?.this_week, l = d?.last_final_cut;
+import { ArrowRight, ArrowUpRight } from "lucide-react";
+import { Filmstrip } from "@/components/Filmstrip";
+import { campaignHref, media, stateLabels } from "@/lib/content";
+import { useLobby } from "@/lib/useLobby";
+export default function Homecoming() {
+  const { data, offline } = useLobby();
+  const current = data?.this_week;
+  const href = current ? `/make-the-cut/${current.slug}` : campaignHref;
+  const published = current?.state === "published" && data?.last_final_cut;
   return (
-    <div className="pt-10">
-      <motion.section initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="text-center">
-        <p className="text-xs font-bold uppercase tracking-[.3em] text-faze-red">Season: Homecoming</p>
-        <h1 className="mt-3 text-5xl font-black uppercase italic leading-[.95] tracking-tight md:text-7xl">You make<br /><span className="text-faze-red">the cut.</span></h1>
-        <p className="mx-auto mt-4 max-w-xl text-white/60">Every week FaZe drops a challenge. Fans send in clips, everyone votes, and the winner lands in the Final Cut.</p>
-      </motion.section>
-
-      {w && (
-        <motion.div data-testid="this-week" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: .1 }}
-          className="relative mt-10 overflow-hidden rounded-3xl p-6 glass md:p-8">
-          <div className="absolute inset-x-0 top-0 h-1.5 faze-stripe" />
-          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
-            <div>
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-faze-red/15 px-3 py-1 text-xs font-semibold text-faze-red"><Flame size={13} /> This week · {STATE_LABEL[w.state] ?? w.state}</span>
-              <h2 className="mt-3 text-3xl font-black md:text-4xl">{w.title}</h2>
-              <p className="mt-2 text-white/55">Recreate the shot. Two finalists. One makes the Final Cut.</p>
-            </div>
-            <Link href={`/drop/${w.slug}`} className="inline-flex items-center gap-2 self-start rounded-2xl bg-faze-red px-6 py-3.5 font-bold shadow-lg shadow-red-700/40 transition hover:brightness-110 md:self-auto">
-              Open the Drop <ArrowRight size={18} />
+    <div className="home-page">
+      <section className="home-hero">
+        <div
+          className="hero-art"
+          style={{ backgroundImage: `url(${media.hero.poster})` }}
+        />
+        <span className="art-label">NEXTFAZE / HOMECOMING / CONCEPT ART</span>
+        <div className="hero-copy">
+          <p className="eyebrow">
+            <span className="live-dot" /> SEASON 01{" "}
+            <span className="red">/</span> HOMECOMING
+          </p>
+          <h1>
+            THE NEXT
+            <br />
+            MOMENT
+            <br />
+            IS <em>YOURS.</em>
+          </h1>
+          <p className="hero-deck">
+            You watched the originals.
+            <br />
+            Now help make what comes next.
+          </p>
+          <div className="actions">
+            <Link
+              className="button primary"
+              href={
+                published ? `/final-cut/${data?.last_final_cut?.slug}` : href
+              }
+            >
+              {published ? "Watch the final cut" : "Make the Cut"}
+              <ArrowRight size={20} />
+            </Link>
+            <Link className="text-link" href="/archive">
+              Where it all started <ArrowUpRight size={16} />
             </Link>
           </div>
-        </motion.div>
-      )}
-
-      <div className="mt-6 grid gap-6 md:grid-cols-2">
-        <div data-testid="last-final-cut" className="rounded-3xl p-6 glass">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-white/45"><Clapperboard size={14} /> Latest Final Cut</div>
-          {l ? (<><h3 className="mt-3 text-xl font-bold">{l.title}</h3><Link href={`/final-cut/${l.slug}`} className="mt-4 inline-flex items-center gap-1 text-faze-red hover:underline">Watch it <ArrowRight size={15} /></Link></>)
-            : <p className="mt-3 text-white/45">The first Final Cut drops after this week's vote.</p>}
         </div>
-        <div className="rounded-3xl p-6 glass">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-white/45"><Timer size={14} /> Next drop</div>
-          <p className="mt-3 text-white/60">{d?.next_drop ? d.next_drop.title : "Announced when this week's Final Cut is out."}</p>
+        <div className="hero-bottom">
+          <span>THE MOMENTS THAT MADE US.</span>
+          <span>THE COMMUNITY THAT KEEPS IT GOING. ↓</span>
         </div>
+      </section>
+      <div className="motion-ticker" aria-hidden="true">
+        <div>
+          <span>WATCH THE ORIGINAL</span><i>✦</i>
+          <span>RECREATE THE MOMENT</span><i>✦</i>
+          <span>BACK YOUR FAVORITE</span><i>✦</i>
+          <span>MAKE THE FINAL CUT</span><i>✦</i>
+          <span>WATCH THE ORIGINAL</span><i>✦</i>
+          <span>RECREATE THE MOMENT</span><i>✦</i>
+          <span>BACK YOUR FAVORITE</span><i>✦</i>
+          <span>MAKE THE FINAL CUT</span><i>✦</i>
+        </div>
+      </div>
+      <div className="page-shell">
+        <Filmstrip />
+        <section className="home-editorial reveal" data-testid="this-week">
+          <div>
+            <p className="eyebrow red">MAKE THE CUT / CHAPTER 01</p>
+            <h2>
+              OLD SCHOOL.
+              <br />
+              NEW <em>LEGENDS.</em>
+            </h2>
+          </div>
+          <div className="editorial-copy">
+            <span className="status-tag">
+              {current
+                ? (stateLabels[current.state] ?? current.state)
+                : "Featured campaign"}
+            </span>
+            <h3>{current?.title ?? "Recreate the Temperrr Shot"}</h3>
+            <p>
+              An iconic shot. A new generation of players. Watch the original,
+              put your own spin on it, and help choose the community cut.
+            </p>
+            <Link href={href} className="text-link">
+              Open the challenge <ArrowRight size={18} />
+            </Link>
+            {offline && (
+              <p className="subtle-note">
+                Preview mode · connect the campaign service for live voting.
+              </p>
+            )}
+          </div>
+        </section>
+        <section className="home-cards reveal">
+          <Link className="image-card" href="/archive">
+            <img
+              src={media.community.poster}
+              alt="Concept artwork of the original gaming era"
+            />
+            <div>
+              <p className="eyebrow">FROM THE ARCHIVE / 2011</p>
+              <h3>
+                BEFORE THE HYPE.
+                <br />
+                THERE WERE CLIPS.
+              </h3>
+              <span className="text-link">
+                Revisit the beginning <ArrowUpRight size={18} />
+              </span>
+            </div>
+          </Link>
+          <div className="next-card" data-testid="last-final-cut">
+            <p className="eyebrow red">
+              {data?.last_final_cut
+                ? "THE LATEST RELEASE"
+                : "THE STORY CONTINUES"}
+            </p>
+            <h3>{data?.last_final_cut?.title ?? "MAKE THE\nNEXT CUT."}</h3>
+            <p>
+              {data?.last_final_cut
+                ? "The community made its choice. See the final cut and meet the creator behind it."
+                : "The closing clip. The creator credit. A chance to be part of what FaZe makes next."}
+            </p>
+            <Link
+              className="button outline"
+              href={
+                data?.last_final_cut
+                  ? `/final-cut/${data.last_final_cut.slug}`
+                  : `${href}#submit`
+              }
+            >
+              {data?.last_final_cut
+                ? "Watch the final cut"
+                : "Post your recreation"}
+              <ArrowRight size={20} />
+            </Link>
+          </div>
+        </section>
+        <section className="home-universe reveal">
+          <div className="home-universe-title"><p className="eyebrow red">EXPLORE NEXTFAZE</p><h2>THE HISTORY.<br />THE PEOPLE.<br /><em>WHAT’S NEXT.</em></h2></div>
+          <div className="home-universe-links">
+            <Link href="/archive"><span>01</span><div><p className="eyebrow">THE LIVING COLLECTION</p><h3>ARCHIVE</h3></div><ArrowUpRight /></Link>
+            <Link href="/roster"><span>02</span><div><p className="eyebrow">CREATORS &amp; COMPETITORS</p><h3>ROSTER</h3></div><ArrowUpRight /></Link>
+            <Link href="/drop"><span>03</span><div><p className="eyebrow">OFFICIAL MERCHANDISE</p><h3>THE DROP</h3></div><ArrowUpRight /></Link>
+          </div>
+        </section>
       </div>
     </div>
   );

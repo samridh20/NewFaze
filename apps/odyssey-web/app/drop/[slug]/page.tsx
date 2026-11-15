@@ -1,103 +1,406 @@
 "use client";
 import Link from "next/link";
-import { use, useCallback, useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Check, Lock, Play, Radio, Timer, Trophy } from "lucide-react";
+import { use, useCallback, useEffect, useState } from "react";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+} from "lucide-react";
 import { api, getToken, ODY, signIn } from "@/lib/api";
-import { HlsPlayer, PlayerHandle } from "@/components/HlsPlayer";
-
-function useCountdown(to?: string | null) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, []);
-  if (!to) return null;
-  const ms = Math.max(0, new Date(to).getTime() - now);
-  const d = Math.floor(ms / 864e5), h = Math.floor((ms % 864e5) / 36e5), m = Math.floor((ms % 36e5) / 6e4), s = Math.floor((ms % 6e4) / 1e3);
-  return { d, h, m, s, done: ms === 0 };
-}
-
-export default function Drop({ params }: { params: Promise<{ slug: string }> }) {
+import { media, stateLabels } from "@/lib/content";
+import { MediaFrame } from "@/components/MediaFrame";
+import { SubmissionForm } from "@/components/SubmissionForm";
+type Finalist = {
+  entry_id: string;
+  label: string;
+  handle: string;
+  playback_url: string | null;
+  marker_ms: number;
+};
+type Campaign = {
+  title: string;
+  state: string;
+  slug: string;
+  reference: { playback_url: string | null };
+  ballot: { id: string; state: string; closes_at: string } | null;
+  finalists: Finalist[];
+  episode_slug: string | null;
+};
+const examples: Finalist[] = [
+  {
+    entry_id: "example-a",
+    label: "A",
+    handle: "yournamehere",
+    playback_url: null,
+    marker_ms: 0,
+  },
+  {
+    entry_id: "example-b",
+    label: "B",
+    handle: "nextgeneration",
+    playback_url: null,
+    marker_ms: 0,
+  },
+];
+export default function Drop({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
   const { slug } = use(params);
-  const [c, setC] = useState<any>(null);
+  const [campaign, setCampaign] = useState<Campaign | null>(null);
+  const [offline, setOffline] = useState(false);
+  const [notFound, setNotFound] = useState(false);
+  const [index, setIndex] = useState(0);
   const [mine, setMine] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string>("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
-  const [voting, setVoting] = useState<string | null>(null);
-  const players = useRef<Record<string, PlayerHandle | null>>({});
-
-  const load = useCallback(async () => { const r = await api(`/v1/campaigns/${slug}`); setC(r.body); }, [slug]);
-  useEffect(() => { load(); setSignedIn(!!getToken()); const u = () => setSignedIn(!!getToken()); window.addEventListener("faze-auth", u); return () => window.removeEventListener("faze-auth", u); }, [load]);
-  useEffect(() => {  // live state over SSE
-    const es = new EventSource(`${ODY}/v1/stream/campaigns/${slug}`);
-    es.addEventListener("state", () => load());
-    return () => es.close();
-  }, [slug, load]);
+  const [now, setNow] = useState<number | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const r = await api<Campaign>(`/v1/campaigns/${slug}`);
+      if (r.status === 200) {
+        setCampaign(r.body);
+        setOffline(false);
+        setNotFound(false);
+      } else if (r.status === 404) {
+        setNotFound(true);
+      } else setOffline(true);
+    } catch {
+      setOffline(true);
+    }
+  }, [slug]);
   useEffect(() => {
-    if (!signedIn || !c?.ballot?.id) return;
-    api(`/v1/ballots/${c.ballot.id}/me`).then((r) => r.status === 200 && setMine(r.body.entry_id ?? null));
-  }, [signedIn, c?.ballot?.id]);
-
-  const cd = useCountdown(c?.ballot?.closes_at);
-  const open = c?.ballot?.state === "open";
-
-  function syncPlay() {  // play both finalists from the marker together
-    Object.values(players.current).forEach((p) => { const v = p?.video; if (v) { v.currentTime = 0; v.play().catch(() => {}); } });
+    load();
+    const update = () => setSignedIn(!!getToken());
+    update();
+    window.addEventListener("faze-auth", update);
+    return () => window.removeEventListener("faze-auth", update);
+  }, [load]);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    setNow(Date.now());
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (!campaign || offline) return;
+    const es = new EventSource(`${ODY}/v1/stream/campaigns/${slug}`);
+    es.addEventListener("state", load);
+    return () => es.close();
+  }, [slug, !!campaign, offline, load]);
+  useEffect(() => {
+    if (!signedIn || !campaign?.ballot?.id) {
+      setMine(null);
+      return;
+    }
+    api<{ entry_id: string | null }>(`/v1/ballots/${campaign.ballot.id}/me`)
+      .then((r) => {
+        if (r.status === 200) setMine(r.body.entry_id);
+      })
+      .catch(() => {});
+  }, [signedIn, campaign?.ballot?.id]);
+  const finalists = campaign?.finalists.length ? campaign.finalists : examples;
+  const active = finalists[index % finalists.length];
+  const isExample = !campaign?.finalists.length;
+  const expired =
+    !!campaign?.ballot?.closes_at &&
+    now !== null &&
+    new Date(campaign.ballot.closes_at).getTime() <= now;
+  const open =
+    campaign?.state === "voting" &&
+    campaign.ballot?.state === "open" &&
+    !expired &&
+    !offline;
+  const remaining =
+    campaign?.ballot?.closes_at && now
+      ? Math.max(0, new Date(campaign.ballot.closes_at).getTime() - now)
+      : null;
+  const date = campaign?.ballot?.closes_at
+    ? new Date(campaign.ballot.closes_at).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : "";
+  async function vote(f: Finalist) {
+    if (!open || !campaign?.ballot || isExample) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      if (!getToken()) {
+        await signIn("fan-ava");
+        setSignedIn(true);
+      }
+      const r = await api<{ title?: string }>(
+        `/v1/ballots/${campaign.ballot.id}/votes`,
+        { method: "POST", body: JSON.stringify({ entry_id: f.entry_id }) },
+      );
+      if (r.status < 300) {
+        setMine(f.entry_id);
+        setMessage("Vote recorded");
+      } else {
+        setMessage(
+          r.status === 409
+            ? "Voting has closed. The final cut is coming next."
+            : r.status === 429
+              ? "A little too fast. Wait a moment and try again."
+              : (r.body.title ?? "Your vote could not be recorded."),
+        );
+        if (r.status === 409) load();
+      }
+    } catch {
+      setMessage(
+        "We couldn’t connect. Your vote has not been recorded. Please try again.",
+      );
+    } finally {
+      setBusy(false);
+    }
   }
-  async function vote(entry: string, label: string) {
-    if (!getToken()) { setMsg("Sign in first"); return; }
-    setVoting(entry);
-    const r = await api(`/v1/ballots/${c.ballot.id}/votes`, { method: "POST", body: JSON.stringify({ entry_id: entry }) });
-    setVoting(null);
-    if (r.status < 300) { setMine(entry); setMsg("Vote recorded"); } else setMsg(`Vote refused: ${r.body.title ?? r.status}`);
+  async function share() {
+    const url = `${window.location.origin}/make-the-cut/${slug}?entry=${active.entry_id}#community`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setMessage("Entry link copied");
+    } catch {
+      setMessage(`Share this entry: ${url}`);
+    }
   }
-
-  if (!c) return <div className="pt-20 text-center text-white/40">Loading the drop…</div>;
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("entry");
+    const i = campaign?.finalists.findIndex((f) => f.entry_id === id);
+    if (i !== undefined && i >= 0) setIndex(i);
+  }, [campaign?.finalists]);
+  if (notFound || (offline && slug !== "homecoming-week1"))
+    return (
+      <div className="page-shell empty-page">
+        <p className="eyebrow red">CAMPAIGN NOT FOUND</p>
+        <h1>ANOTHER WAY IN.</h1>
+        <p>This campaign isn’t available. Explore the current challenge instead.</p>
+        <Link className="button primary" href="/make-the-cut">
+          Browse campaigns <ArrowRight />
+        </Link>
+      </div>
+    );
   return (
-    <div className="pt-8">
-      <Link href="/" className="text-sm text-white/45 hover:text-white">← Lobby</Link>
-      <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
-        <div>
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold ${open ? "bg-emerald-500/15 text-emerald-300" : "bg-white/10 text-white/70"}`}>
-            {open ? <Radio size={12} className="animate-pulse" /> : <Lock size={12} />} <span data-testid="state">State: {c.ballot?.state ?? c.state}</span>
+    <div className="campaign-page">
+      <div className="page-shell">
+        <div className="page-kicker">
+          <Link href="/make-the-cut">
+            <ArrowLeft size={13} /> MAKE THE CUT
+          </Link>
+          <span data-testid="state">
+            {campaign
+              ? (stateLabels[campaign.state] ?? campaign.state)
+              : offline
+                ? "CAMPAIGN PREVIEW"
+                : "CONNECTING TO CAMPAIGN…"}
           </span>
-          <h1 className="mt-3 text-3xl font-black md:text-5xl">{c.title}</h1>
         </div>
-        {open && cd && (
-          <div className="flex gap-2 text-center">
-            {[["d", cd.d], ["h", cd.h], ["m", cd.m], ["s", cd.s]].map(([k, v]) => (
-              <div key={k as string} className="w-16 rounded-xl py-2 glass"><div className="text-2xl font-black tabular-nums">{String(v).padStart(2, "0")}</div><div className="text-[10px] uppercase text-white/40">{k}</div></div>
-            ))}
+        <section className="shot-hero">
+          <div className="shot-copy">
+            <p className="eyebrow red">HOMECOMING / RECREATE THE SHOT</p>
+            <h1>
+              THE
+              <br />
+              TEMPERRR
+              <br />
+              <em>SHOT.</em>
+            </h1>
+            <p>
+              One rooftop. One impossible moment.
+              <br />
+              Now it’s your turn.
+            </p>
+            <div className="shot-jumps">
+              <a className="button primary" href="#community">
+                See the recreations <ArrowDown size={18} />
+              </a>
+              <a href="#catch-up" className="text-link">
+                New to this shot? <ArrowDown size={15} />
+              </a>
+            </div>
+          </div>
+          <div className="shot-original">
+            <MediaFrame
+              src={campaign?.reference.playback_url || media.reference.src}
+              poster={media.reference.poster}
+              youtube={media.reference.youtube}
+              title="The original Temperrr Shot"
+              caption="THE ORIGINAL · FAZE TEMPERRR · MODERN WARFARE 2"
+            />
+          </div>
+        </section>
+        {offline && (
+          <div className="connection-note">
+            Campaign preview · live voting is unavailable until the campaign
+            service connects.{" "}
+            <button onClick={load}>Try connection again ↗</button>
           </div>
         )}
+        <div className="campaign-facts">
+          <span>01 / WATCH THE ORIGINAL</span>
+          <span>02 / MAKE IT YOUR OWN</span>
+          <span>03 / LET THE COMMUNITY CALL IT</span>
+        </div>
       </div>
-
-      <div className="mt-6 flex flex-wrap items-center gap-3">
-        <button onClick={syncPlay} className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm chip"><Play size={14} /> Synced replay (both clips)</button>
-        {!signedIn && open && <button onClick={() => signIn("fan-ava")} className="rounded-xl bg-faze-red px-4 py-2 text-sm font-semibold">Sign in to vote</button>}
-        {c.episode_slug && <Link href={`/final-cut/${c.episode_slug}`} className="inline-flex items-center gap-2 rounded-xl bg-faze-red px-4 py-2 text-sm font-semibold"><Trophy size={14} /> Watch the Final Cut</Link>}
-      </div>
-
-      <div id="finalists" className="mt-6 grid gap-6 md:grid-cols-2">
-        {(c.finalists ?? []).map((f: any) => {
-          const picked = mine === f.entry_id;
-          return (
-            <motion.div key={f.entry_id} layout className={`overflow-hidden rounded-3xl glass transition ${picked ? "ring-2 ring-faze-red" : ""}`}>
-              <div className="relative aspect-video bg-black">
-                <HlsPlayer ref={(p) => { players.current[f.label] = p; }} src={f.playback_url} className="h-full w-full object-cover" label={`Clip ${f.label}`} />
-                <span className="absolute left-3 top-3 rounded-lg bg-black/70 px-2.5 py-1 text-sm font-black">CLIP {f.label}</span>
+      <section id="catch-up" className="tutorial-section">
+        <div className="page-shell tutorial-grid">
+          <div>
+            <p className="eyebrow red">CATCH ME UP / THE BREAKDOWN</p>
+            <h2>
+              HOW DID
+              <br />
+              HE <em>DO IT?</em>
+            </h2>
+            <p>
+              The controller cam. The rooftop. The move that became a reference
+              point. Watch the official FaZe tutorial, then see how today’s
+              players bring it back.
+            </p>
+            <a className="text-link" href="#community">
+              Community recreations <ArrowDown size={18} />
+            </a>
+          </div>
+          <MediaFrame
+            poster={media.tutorial.poster}
+            youtube={media.tutorial.youtube}
+            title="Official FaZe Temperrr Shot tutorial"
+            caption="LEARN THE MOVE · OFFICIAL FAZE TUTORIAL"
+          />
+        </div>
+      </section>
+      <div className="page-shell">
+        <section id="community" className="community-section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow red">SAME MOMENT. NEW GENERATION.</p>
+              <h2>COMMUNITY RECREATIONS</h2>
+            </div>
+            <span className="eyebrow">
+              {isExample
+                ? "GALLERY PREVIEW / ILLUSTRATIVE ENTRIES"
+                : `${finalists.length} EDITORIALLY SELECTED FINALISTS`}
+            </span>
+          </div>
+          <div className="gallery-layout">
+            <MediaFrame
+              key={active.entry_id}
+              poster={
+                index % 2 ? media.nightshift.poster : media.rooftop.poster
+              }
+              src={active.playback_url}
+              title={
+                isExample
+                  ? "Community recreation placeholder"
+                  : `Recreation by ${active.handle}`
+              }
+              caption={
+                isExample
+                  ? "PLACEHOLDER · YOUR APPROVED ENTRIES WILL APPEAR HERE"
+                  : `CLIP ${active.label} · ${active.handle}`
+              }
+            />
+            <div className="creator-panel">
+              <div className="gallery-controls">
+                <span>
+                  {String((index % finalists.length) + 1).padStart(2, "0")}{" "}
+                  <i>/ {String(finalists.length).padStart(2, "0")}</i>
+                </span>
+                <div>
+                  <button
+                    aria-label="Previous recreation"
+                    onClick={() =>
+                      setIndex(
+                        (index - 1 + finalists.length) % finalists.length,
+                      )
+                    }
+                  >
+                    <ChevronLeft />
+                  </button>
+                  <button
+                    aria-label="Next recreation"
+                    onClick={() => setIndex((index + 1) % finalists.length)}
+                  >
+                    <ChevronRight />
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center justify-between p-5">
-                <div><div className="font-bold">@{f.handle}</div><div className="text-xs text-white/45">Marker at {(f.marker_ms / 1000).toFixed(1)}s</div></div>
-                <button data-vote={f.entry_id} disabled={!open || voting !== null} onClick={() => vote(f.entry_id, f.label)}
-                  className={`inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-bold transition disabled:opacity-50 ${picked ? "bg-white text-black" : "bg-faze-red hover:brightness-110"}`}>
-                  {picked ? <><Check size={16} /> Your pick</> : <>Vote for {f.label}</>}
+              <p className="eyebrow red">
+                {isExample
+                  ? "YOUR PLACE IN THE STORY"
+                  : `FINALIST / CLIP ${active.label}`}
+              </p>
+              <h3>@{active.handle.replace(/^@/, "")}</h3>
+              <p>
+                {isExample
+                  ? "This could be your recreation. Your clip, your credit, and a shot at the next community cut."
+                  : "A new take on an original moment. Watch the recreation, then back the clip you want in the community cut."}
+              </p>
+              <button
+                className="button primary"
+                data-vote={active.entry_id}
+                disabled={!open || busy || isExample}
+                onClick={() => vote(active)}
+              >
+                {mine === active.entry_id ? (
+                  <>
+                    <Check size={18} /> Your pick
+                  </>
+                ) : busy ? (
+                  "Recording…"
+                ) : (
+                  `Vote for ${active.label}`
+                )}
+                <ArrowRight size={18} />
+              </button>
+              {!isExample && (
+                <button className="text-link share-link" onClick={share}>
+                  Share this recreation <Copy size={14} />
                 </button>
-              </div>
-            </motion.div>
-          );
-        })}
+              )}
+              <p className="subtle-note">
+                {isExample
+                  ? "Preview entries aren’t real submissions and cannot receive votes."
+                  : open
+                    ? "One current vote per fan. Change your pick until the ballot closes."
+                    : "Voting is closed or hasn’t opened yet. You can still watch the clips."}
+              </p>
+              {remaining !== null && (
+                <div className="deadline">
+                  <span className="eyebrow">
+                    {expired ? "VOTING CLOSED" : "VOTING ENDS IN"}
+                  </span>
+                  <strong>
+                    {expired
+                      ? "THE NEXT CUT IS COMING"
+                      : `${Math.floor(remaining / 86400000)}D : ${String(Math.floor(remaining / 3600000) % 24).padStart(2, "0")}H : ${String(Math.floor(remaining / 60000) % 60).padStart(2, "0")}M`}
+                  </strong>
+                  <small>{date}</small>
+                </div>
+              )}
+            </div>
+          </div>
+          <p id="result" role="status" className="vote-message">
+            {message}
+          </p>
+          {campaign?.episode_slug && (
+            <Link
+              href={`/final-cut/${campaign.episode_slug}`}
+              className="button outline"
+            >
+              Watch the Final Cut <ArrowRight size={20} />
+            </Link>
+          )}
+        </section>
+        <SubmissionForm
+          slug={slug}
+          accepting={!campaign || campaign.state === "accepting_entries"}
+        />
       </div>
-      <AnimatePresence>{msg && <motion.p id="result" role="status" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-5 text-center text-sm text-white/70">{msg}</motion.p>}</AnimatePresence>
-      <p className="mt-6 text-center text-xs text-white/35">Vote totals stay hidden until the ballot closes. You can change your vote while it's open.</p>
     </div>
   );
 }
