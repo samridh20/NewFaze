@@ -92,3 +92,6 @@ live-check-gemini: ## Needs CONFIRM_LIVE=1. Checks the key can see and generate 
 
 live-check-zep: ## Read-only Zep check (no tokens)
 	$(PY) scripts/check_zep.py
+live-mirofish: ## Needs CONFIRM_LIVE=1. Runs chain steps 1 to 7 against the live MiroFish container
+	@test "$$CONFIRM_LIVE" = "1" || (echo "Refusing: spends Gemini tokens (budget key, rounds capped). Re-run with CONFIRM_LIVE=1"; exit 2)
+	$(PY) scripts/verify_mirofish_chain.py

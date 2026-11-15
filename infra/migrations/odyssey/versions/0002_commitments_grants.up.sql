@@ -29,3 +29,7 @@ grant delete on odyssey.idempotency_keys to odyssey_app;
 revoke update, delete on odyssey.outbox from odyssey_app;
 grant select, insert on odyssey.outbox to odyssey_app;
 grant usage, select on all sequences in schema odyssey to odyssey_app;
+-- The key janitor (workers_rw) purges expired idempotency keys and nothing else in this schema.
+grant usage on schema odyssey to workers_rw;
+grant select, delete on odyssey.idempotency_keys to workers_rw;
+grant select on odyssey.ballots, odyssey.episodes, odyssey.campaigns to workers_rw;

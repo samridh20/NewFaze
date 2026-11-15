@@ -8,3 +8,5 @@ delete from odyssey.sim_predictions;
 alter table odyssey.sim_predictions drop column commitment;
 alter table odyssey.sim_predictions add column predicted jsonb not null;
 grant select, insert, update, delete on all tables in schema odyssey to odyssey_app;
+revoke select, delete on odyssey.idempotency_keys from workers_rw;
+revoke select on odyssey.ballots, odyssey.episodes, odyssey.campaigns from workers_rw;
