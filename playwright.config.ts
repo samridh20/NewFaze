@@ -7,7 +7,7 @@ export default defineConfig({
   webServer: {
     command: ".venv/bin/python scripts/dev.py",
     url: "http://localhost:3002",
-    reuseExistingServer: false,
+    reuseExistingServer: !!process.env.PW_REUSE,
     timeout: 180_000,
   },
   reporter: [["list"]],

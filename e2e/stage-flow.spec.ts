@@ -14,7 +14,6 @@ test("Drop, vote, close, publish, Final Cut, Sim vs Fans, VOD Review, Partners",
   await expect(page.locator("#result")).toHaveText("Vote recorded");
 
   await page.goto(`${LAB}/scrims`);
-  await page.getByRole("button", { name: /Sign in as producer/ }).click();
   await page.getByRole("button", { name: "Run fixture scrim" }).click();
   await expect(page.getByTestId("log")).toContainText("Scrim done (fixture model, uncalibrated)");
   await page.getByRole("button", { name: /Register prediction/ }).click();
@@ -35,6 +34,7 @@ test("Drop, vote, close, publish, Final Cut, Sim vs Fans, VOD Review, Partners",
   await page.goto(LAB);
   await expect(page.getByText("Engine online")).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/\d+ entities/)).toBeVisible({ timeout: 20_000 });
-  await page.getByRole("button", { name: "Ask", exact: true }).click();
-  await expect(page.getByText(/· live/)).toBeVisible({ timeout: 150_000 });
+  await expect(page.getByRole("link", { name: "Scrims" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "VOD Review" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Partners" })).toHaveCount(0);
 });

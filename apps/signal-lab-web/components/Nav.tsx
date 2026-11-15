@@ -1,13 +1,11 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Radio, Film, Handshake, Waves } from "lucide-react";
+import { Radio, Waves, Network } from "lucide-react";
 
 const LINKS = [
-  { href: "/", label: "MiroFish", icon: Waves },
-  { href: "/scrims", label: "Scrims", icon: Activity },
-  { href: "/vod", label: "VOD Review", icon: Film },
-  { href: "/partners", label: "Partners", icon: Handshake },
+  { href: "/", label: "Decision Lab", icon: Waves },
+  { href: "/ecosystem", label: "Ecosystem", icon: Network },
 ];
 
 export function Nav() {
@@ -19,7 +17,7 @@ export function Nav() {
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-faze-red shadow-lg shadow-red-600/30"><Radio size={18} /></div>
           <div>
             <div className="text-[15px] font-semibold tracking-tight">Signal Lab</div>
-            <div className="text-[11px] text-white/45">FaZe Odyssey · MiroFish-powered audience simulation</div>
+            <div className="text-[11px] text-white/45">FaZe decision intelligence</div>
           </div>
         </div>
         <nav className="flex gap-1 rounded-xl p-1 chip">
