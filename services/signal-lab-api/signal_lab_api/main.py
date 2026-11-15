@@ -126,6 +126,14 @@ async def reveal_and_publish(run_id: uuid.UUID, request: Request, user: Staff) -
     return resp.json()
 
 
+@app.post("/v1/ballots/{ballot_id}/close")
+async def close_ballot(ballot_id: uuid.UUID, user: Staff) -> dict[str, Any]:
+    resp = await odyssey("POST", f"/internal/v1/ballots/{ballot_id}/close", user.sub)
+    if resp.status_code != 200:
+        raise ProblemError(resp.status_code, "upstream-error", "Odyssey refused to close", resp.text[:200])
+    return resp.json()
+
+
 @app.get("/v1/vod/{slug}")
 async def vod_review(slug: str, user: Staff) -> dict[str, Any]:
     """VOD Review: the published Final Cut with the real tally and Sim vs Fans, read from Odyssey's public API."""
@@ -135,6 +143,13 @@ async def vod_review(slug: str, user: Staff) -> dict[str, Any]:
     ep = resp.json()
     markers = [{"label": p["kind"], "asset_id": p.get("asset_id")} for p in ep["sequence"]]
     return {"episode": ep, "markers": markers, "sim_vs_fans": ep.get("sim_vs_fans")}
+
+
+@app.get("/v1/partners")
+async def list_partners(request: Request, user: Staff) -> dict[str, Any]:
+    async with engine(request).connect() as conn:
+        rows = (await conn.execute(text("select id, name from lab.partners order by name"))).all()
+    return {"partners": [{"id": str(r.id), "name": r.name} for r in rows]}
 
 
 @app.get("/v1/partners/{partner_id}/report")

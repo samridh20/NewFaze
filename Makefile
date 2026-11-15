@@ -6,7 +6,7 @@ SHELL := /bin/bash
 UV := uv
 PY := $(UV) run --no-sync python
 
-.PHONY: help env setup setup-python setup-node db-install db-up db-down db-reset migrate seed \
+.PHONY: e2e dev live-mirofish fix-pth help env setup setup-python setup-node db-install db-up db-down db-reset migrate seed \
         test test-unit test-integration lint fmt typecheck check compose-check compose-up compose-down \
         live-check-gemini live-check-zep secret-scan litellm-guard
 
@@ -95,3 +95,8 @@ live-check-zep: ## Read-only Zep check (no tokens)
 live-mirofish: ## Needs CONFIRM_LIVE=1. Runs chain steps 1 to 7 against the live MiroFish container
 	@test "$$CONFIRM_LIVE" = "1" || (echo "Refusing: spends Gemini tokens (budget key, rounds capped). Re-run with CONFIRM_LIVE=1"; exit 2)
 	$(PY) scripts/verify_mirofish_chain.py
+dev: ## Start every service with only its own env files (foreground)
+	$(PY) scripts/dev.py
+e2e: ## Seed, start the services, run the Playwright happy path (stop `make dev` first)
+	$(MAKE) seed
+	npx playwright test

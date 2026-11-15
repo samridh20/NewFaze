@@ -31,6 +31,9 @@ if not DEMO_MODE:
 
 _KEY = load_or_create_private_key()
 app = FastAPI(title="FaZe dev-auth (DEMO_MODE only)", docs_url=None, redoc_url=None)
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3001", "http://localhost:3002"],
+                   allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Content-Type"])
 
 
 class TokenRequest(BaseModel):

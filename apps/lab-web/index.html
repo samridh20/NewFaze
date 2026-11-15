@@ -1,0 +1,45 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Signal Lab</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>body{font:16px system-ui;margin:2rem auto;max-width:52rem;background:#101418;color:#e6edf3}button{padding:.5rem 1rem;margin:.25rem}
+.card{border:1px solid #3b4654;padding:1rem;margin:1rem 0;border-radius:8px}a{color:#58a6ff}pre{white-space:pre-wrap}input{padding:.4rem;width:70%}</style></head><body>
+<h1>Signal Lab</h1><nav><a href="/">Scrims</a> | <a href="/vod">VOD Review</a> | <a href="/partners">Partners</a> | <a href="/mirofish">MiroFish</a></nav>
+<main id="app" aria-live="polite"></main>
+<script>
+const LAB="http://localhost:8002",AUTH="http://localhost:8003",ODY="http://localhost:8001";let token=sessionStorage.getItem("lt");
+const $=(h)=>{document.getElementById("app").innerHTML=h};
+const lab=async(p,o={})=>{const r=await fetch(LAB+p,{...o,headers:{"Content-Type":"application/json",Authorization:"Bearer "+token}});return{status:r.status,body:await r.json().catch(()=>({}))}};
+async function signIn(account){const r=await fetch(AUTH+"/dev/token",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({account})});token=(await r.json()).access_token;sessionStorage.setItem("lt",token)}
+const gate=(render)=>{if(!token){$('<p>Staff sign-in required.</p><button id="si">Sign in as producer (pat)</button>');document.getElementById("si").onclick=async()=>{await signIn("producer-pat");render()};return false}return true};
+const log=(m)=>{const e=document.getElementById("log");if(e)e.textContent=m};
+async function scrims(){if(!gate(scrims))return;
+ const c=(await(await fetch(ODY+"/v1/campaigns/homecoming-week1")).json());const f=c.finalists||[];
+ $(`<h2>Scrim: Sim vs Fans</h2><div class="card"><p>Ballot: <span data-testid="ballot">${c.ballot.state}</span></p>
+ <button id="run">Run fixture scrim</button><button id="commit" disabled>Register prediction (hash only)</button>
+ <button id="close" disabled>Close ballot</button><button id="publish" disabled>Reveal and publish</button></div>
+ <pre id="log" role="status" data-testid="log"></pre>`);
+ let run=null;const labels={};f.forEach(x=>labels[x.entry_id]=x.label);
+ document.getElementById("run").onclick=async()=>{const r=await lab("/v1/scrims",{method:"POST",body:JSON.stringify({ballot_id:c.ballot.id,labels,bots:20})});
+  if(r.status!==201){log("Scrim failed: "+(r.body.title||r.status));return}run=r.body.id;log(`Scrim done (fixture model, uncalibrated). A-B gap: ${r.body.paired_summary.a_minus_b}`);document.getElementById("commit").disabled=false};
+ document.getElementById("commit").onclick=async()=>{const r=await lab(`/v1/scrims/${run}/prediction`,{method:"POST"});log(r.status===200?"Prediction committed as hash "+r.body.commitment.slice(0,12)+"…":"Commit failed: "+(r.body.title||r.status));if(r.status===200)document.getElementById("close").disabled=false};
+ document.getElementById("close").onclick=async()=>{const r=await lab(`/v1/ballots/${c.ballot.id}/close`,{method:"POST"});log(r.status===200?"Ballot closed":"Close failed");if(r.status===200)document.getElementById("publish").disabled=false};
+ document.getElementById("publish").onclick=async()=>{const r=await lab(`/v1/scrims/${run}/reveal-and-publish`,{method:"POST"});
+  log(r.status===200?"Published. Final Cut: "+(r.body.slug||(r.body.episode||{}).slug):"Publish failed: "+(r.body.title||r.status));
+  if(r.status===200){sessionStorage.setItem("slug",r.body.slug||(r.body.episode||{}).slug)}}}
+async function vod(){if(!gate(vod))return;const slug=sessionStorage.getItem("slug")||"homecoming-week1-final-cut";
+ const r=await lab("/v1/vod/"+slug);if(r.status!==200){$("<h2>VOD Review</h2><p>No published Final Cut yet.</p>");return}
+ const s=r.body.sim_vs_fans;$(`<h2>VOD Review</h2><div class="card" data-testid="vod"><h3>${r.body.episode.title}</h3>
+ <p>Markers: ${r.body.markers.map(m=>m.label).join(", ")}</p>
+ ${s?`<p data-testid="vod-sim">Simulated ${JSON.stringify(s.predicted)} vs real ${JSON.stringify(s.real)} (simulated, uncalibrated)</p>`:"<p>No prediction was registered.</p>"}</div>`)}
+async function partners(){if(!gate(partners))return;$("<h2>Partners</h2><div id='plist'>Loading…</div>");
+ const l=await lab("/v1/partners");const out=[];
+ for(const x of (l.body.partners||[])){const r=await lab("/v1/partners/"+x.id+"/report");
+  out.push(r.status===200?`<div class="card" data-testid="partner"><h3>${r.body.partner.name}</h3><ul>${r.body.activations.map(a=>`<li>${a.name} at ${a.placement}</li>`).join("")}</ul><p>${r.body.note}</p></div>`:"Report unavailable ("+r.status+")")}
+ document.getElementById("plist").innerHTML=out.join("")||"No partners."}
+async function mirofish(){if(!gate(mirofish))return;const s=await lab("/v1/mirofish/status");
+ $(`<h2>MiroFish</h2><p data-testid="mf-status">${s.status===200?"Live MiroFish reachable":"MiroFish unreachable ("+s.status+")"}</p>
+ <div class="card"><input id="q" value="Which clip do you favour and why?" aria-label="Question"><button id="ask">Ask the simulated fan</button><pre id="log" data-testid="mf-reply"></pre></div>`);
+ document.getElementById("ask").onclick=async()=>{log("Waiting for the live agent…");const r=await lab("/v1/mirofish/chat",{method:"POST",body:JSON.stringify({prompt:document.getElementById("q").value})});
+  log(r.status===200?"LIVE reply: "+JSON.stringify(r.body.reply):"Chat failed: "+(r.body.title||r.status))}}
+const p=location.pathname.split("/").filter(Boolean)[0];
+({vod,partners,mirofish})[p]?({vod,partners,mirofish})[p]():scrims();
+</script></body></html>
